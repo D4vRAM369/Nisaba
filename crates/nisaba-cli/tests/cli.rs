@@ -116,3 +116,25 @@ fn abrir_lanza_gui_del_path_con_id_literal() {
         "--abrir\ncx-cx01\n"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn datos_sin_permiso_avisa() {
+    use std::os::unix::fs::PermissionsExt;
+    let c = ctx();
+    let bloqueada = c.dir.path().join("bloqueada");
+    std::fs::create_dir_all(&bloqueada).unwrap();
+    std::fs::set_permissions(&bloqueada, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let o = c
+        .comando(&["salud"])
+        .env("NISABA_HOME", bloqueada.join("nisaba"))
+        .output()
+        .unwrap();
+    std::fs::set_permissions(&bloqueada, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(o.status.code(), Some(1), "{}", out(&o));
+    assert!(
+        err(&o).contains("No puedo crear la carpeta de datos"),
+        "{}",
+        err(&o)
+    );
+}

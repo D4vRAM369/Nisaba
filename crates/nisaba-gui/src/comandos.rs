@@ -100,13 +100,7 @@ pub async fn proyectos() -> Result<Vec<String>, String> {
 #[tauri::command]
 pub async fn aviso_limpieza() -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let settings = std::env::var_os("NISABA_CLAUDE_SETTINGS")
-            .filter(|s| !s.is_empty())
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| {
-                std::path::PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                    .join(".claude/settings.json")
-            });
+        let settings = nisaba_core::ajustes_claude();
         nisaba_core::salud::aviso_limpieza_claude(&settings)
     })
     .await

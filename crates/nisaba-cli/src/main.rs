@@ -93,7 +93,14 @@ fn indexar_antes(conn: &mut Connection, rutas: &Rutas) {
 }
 
 fn ejecutar(orden: Orden) -> Result<u8, String> {
+    nisaba_core::comprobar_entorno()?;
     let rutas = Rutas::desde_entorno();
+    std::fs::create_dir_all(&rutas.home).map_err(|e| {
+        format!(
+            "No puedo crear la carpeta de datos {}: {e}",
+            rutas.home.display()
+        )
+    })?;
     if let Orden::Mcp = orden {
         return mcp::servir(&rutas).map(|_| 0).map_err(|e| e.to_string());
     }
@@ -238,13 +245,7 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                     println!("    {ruta}: {msg}");
                 }
             }
-            let settings = std::env::var_os("NISABA_CLAUDE_SETTINGS")
-                .filter(|v| !v.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
-                        .join(".claude/settings.json")
-                });
+            let settings = nisaba_core::ajustes_claude();
             if let Some(a) = aviso_limpieza_claude(&settings) {
                 println!("\n⚠ {a}");
             }

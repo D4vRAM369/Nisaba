@@ -57,6 +57,18 @@ impl Indexacion {
         if self.0.iniciado.swap(true, Ordering::AcqRel) {
             return;
         }
+        if let Err(mensaje) = nisaba_core::comprobar_entorno() {
+            self.emitir(
+                &app,
+                EstadoIndexacion {
+                    estado: "fallo",
+                    vistos: 0,
+                    total: 0,
+                    mensaje: Some(mensaje),
+                },
+            );
+            return;
+        }
         let control = self.clone();
         std::thread::spawn(move || control.vigilar(app, Rutas::desde_entorno()));
     }
