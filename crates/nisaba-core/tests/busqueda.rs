@@ -184,3 +184,37 @@ fn resolver_respeta_el_extremo_de_cada_fila_y_detecta_ambiguedad() {
     }
     assert!(resolver_id(&e.conn, "cx-deadbeef").unwrap().is_none());
 }
+
+#[test]
+fn recientes_lista_sesiones_madre_por_fecha_sin_contar_busquedas() {
+    use nisaba_core::busqueda::{recientes, recientes_desde};
+    let e = indexado();
+    e.conn.execute("UPDATE conversaciones SET fin='2026-10-01' WHERE fuente='codex'", []).unwrap();
+    e.conn.execute("UPDATE conversaciones SET fin='2026-10-02' WHERE fuente='claude-code'", []).unwrap();
+    let f = Filtros { limite: 1, ..Default::default() };
+    let primera = recientes(&e.conn, &f).unwrap();
+    let segunda = recientes_desde(&e.conn, &f, 1).unwrap();
+    assert_eq!(primera.total_sesiones, 2);
+    assert_eq!(primera.resultados.len(), 1);
+    assert_eq!(primera.resultados[0].id_publico, "cc-a1b2c3d4");
+    assert_eq!(segunda.resultados[0].id_publico, "cx-cx01");
+    assert_eq!(segunda.total_sesiones, 2);
+    assert_eq!(primera.resultados[0].coincidencias, 0);
+    assert!(!primera.resultados[0].fragmento.contains("ornitorrinco"));
+    assert!(recientes_desde(&e.conn, &f, 9).unwrap().resultados.is_empty());
+    let uso: i64 = e.conn.query_row("SELECT COUNT(*) FROM uso", [], |r| r.get(0)).unwrap();
+    assert_eq!(uso, 0);
+}
+
+#[test]
+fn recientes_respeta_fuente_proyecto_y_fecha() {
+    use nisaba_core::{busqueda::recientes, modelo::Fuente};
+    let e = indexado();
+    let codex = recientes(&e.conn, &Filtros { fuente: Some(Fuente::Codex), ..Default::default() }).unwrap();
+    assert_eq!(codex.total_sesiones, 1);
+    assert_eq!(codex.resultados[0].id_publico, "cx-cx01");
+    let demo = recientes(&e.conn, &Filtros { proyecto: Some("Demo".into()), ..Default::default() }).unwrap();
+    assert_eq!(demo.total_sesiones, 1);
+    let futuro = recientes(&e.conn, &Filtros { desde: Some("2999-01-01".into()), ..Default::default() }).unwrap();
+    assert_eq!(futuro.total_sesiones, 0);
+}

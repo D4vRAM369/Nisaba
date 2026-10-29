@@ -328,3 +328,37 @@ pub fn resolver_id(conn: &Connection, id_publico: &str) -> rusqlite::Result<Opti
         _ => None,
     })
 }
+
+/// Lista las sesiones madre sin contar una consulta de búsqueda.
+pub fn recientes(conn: &Connection, f: &Filtros) -> rusqlite::Result<Respuesta> {
+    recientes_desde(conn, f, 0)
+}
+
+pub fn recientes_desde(conn: &Connection, f: &Filtros, desplazamiento: usize) -> rusqlite::Result<Respuesta> {
+    const CONDICION: &str = "c.padre_id IS NULL AND c.fuente IN ('claude-code','codex')
+        AND (?1 IS NULL OR c.fuente=?1)
+        AND (?2 IS NULL OR c.proyecto=?2)
+        AND (?3 IS NULL OR c.fin>=?3)";
+    let fuente = f.fuente.map(|f| f.as_str());
+    let total_sesiones = conn.query_row(
+        &format!("SELECT COUNT(*) FROM conversaciones c WHERE {CONDICION}"),
+        params![fuente, f.proyecto, f.desde], |r| r.get(0),
+    )?;
+    let mut st = conn.prepare(&format!(
+        "SELECT c.fuente,c.id_original,COALESCE(c.titulo,''),c.proyecto,c.fin,
+         COALESCE((SELECT substr(p.contenido,1,180) FROM mensajes m JOIN partes p ON p.mensaje_id=m.id
+           WHERE m.conversacion_id=c.id AND m.oculto=0 AND p.tipo='texto'
+           ORDER BY m.orden,p.orden LIMIT 1),'')
+         FROM conversaciones c WHERE {CONDICION} ORDER BY c.fin DESC,c.id DESC LIMIT ?4 OFFSET ?5"
+    ))?;
+    let resultados = st.query_map(params![fuente, f.proyecto, f.desde,
+        i64::try_from(f.limite).unwrap_or(i64::MAX),
+        i64::try_from(desplazamiento).unwrap_or(i64::MAX)], |r| {
+        let nombre: String = r.get(0)?;
+        let fuente = Fuente::desde_str(&nombre).ok_or(rusqlite::Error::InvalidQuery)?;
+        let id: String = r.get(1)?;
+        Ok(Resultado { id_publico: id_publico(fuente,&id), fuente, titulo:r.get(2)?, proyecto:r.get(3)?, fin:r.get(4)?,
+            fragmento:r.get(5)?, coincidencias:0, orden_mensaje:0 })
+    })?.collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(Respuesta { resultados, total_sesiones, sugerencia: None })
+}
