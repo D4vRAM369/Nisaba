@@ -1,4 +1,8 @@
+mod formato;
+mod mcp;
+
 use clap::{Parser, Subcommand};
+use formato::texto_busqueda;
 use nisaba_core::busqueda::{buscar, resolver_id, Filtros};
 use nisaba_core::db;
 use nisaba_core::indexador::{indexar, Progreso, ResultadoIndexado, Rutas};
@@ -55,6 +59,8 @@ enum Orden {
     Salud,
     /// Búsquedas por día y canal (últimos 14 días)
     Uso,
+    /// Servidor MCP por stdio (para Claude Code y otros agentes)
+    Mcp,
 }
 
 fn main() -> ExitCode {
@@ -81,9 +87,13 @@ fn indexar_antes(conn: &mut Connection, rutas: &Rutas) {
 
 fn ejecutar(orden: Orden) -> Result<u8, String> {
     let rutas = Rutas::desde_entorno();
+    if let Orden::Mcp = orden {
+        return mcp::servir(&rutas).map(|_| 0).map_err(|e| e.to_string());
+    }
     let mut conn = abrir(&rutas)?;
     let e = |x: rusqlite::Error| x.to_string();
     match orden {
+        Orden::Mcp => unreachable!("atendido arriba"),
         Orden::Buscar { consulta, fuente, proyecto, desde, razonamiento, codigo, limite, json } => {
             let fuente = match fuente.as_deref() {
                 None => None,
@@ -97,15 +107,7 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 return Ok(0);
             }
             let tty = std::io::stdout().is_terminal();
-            for x in &r.resultados {
-                let fecha: String = x.fin.as_deref().unwrap_or("").chars().take(10).collect();
-                println!("{}  {}", x.id_publico, x.titulo);
-                println!("   {} · {} · {} coincidencias", x.fuente.as_str(), fecha, x.coincidencias);
-                println!("   {}", resaltar(&x.fragmento, tty));
-            }
-            if let Some(s) = &r.sugerencia {
-                println!("{s}");
-            }
+            print!("{}", texto_busqueda(&r, tty, false));
             Ok(0)
         }
         Orden::Ver { id, desde, cantidad, todo } => {
@@ -187,12 +189,4 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             Ok(0)
         }
     }
-}
-
-/// Pinta «…» en negrita ANSI si hay terminal.
-fn resaltar(s: &str, tty: bool) -> String {
-    if !tty {
-        return s.to_string();
-    }
-    s.replace('«', "\x1b[1m«").replace('»', "»\x1b[0m")
 }
