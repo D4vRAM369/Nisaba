@@ -147,10 +147,13 @@ impl Indexacion {
                     if let Err(e) = evento {
                         aviso = Some(e);
                     }
-                    // Espera dos segundos desde el último cambio; no pierde cambios durante una pasada.
-                    while let Ok(evento) = rx.recv_timeout(Duration::from_secs(2)) {
-                        if let Err(e) = evento {
-                            aviso = Some(e);
+                    // Agrupa dos segundos de calma, con tope para una sesión que escribe continuamente.
+                    let inicio_rafaga = Instant::now();
+                    while let Some(espera) = espera_debounce(inicio_rafaga.elapsed()) {
+                        match rx.recv_timeout(espera) {
+                            Ok(Err(e)) => aviso = Some(e),
+                            Ok(Ok(())) => {}
+                            Err(_) => break,
                         }
                     }
                     if let Some(e) = registrar_fuentes(watcher.as_mut(), &rutas, &mut vigiladas) {
@@ -259,6 +262,13 @@ pub fn estado_indexacion(control: tauri::State<'_, Indexacion>) -> EstadoIndexac
     control.estado()
 }
 
+fn espera_debounce(transcurrido: Duration) -> Option<Duration> {
+    Duration::from_secs(5)
+        .checked_sub(transcurrido)
+        .filter(|restante| !restante.is_zero())
+        .map(|restante| restante.min(Duration::from_secs(2)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,5 +320,18 @@ mod tests {
             notify::event::DataChange::Any,
         )));
         assert!(evento_relevante(&e));
+    }
+    #[test]
+    fn rafaga_continua_no_pospone_indexacion_mas_de_cinco_segundos() {
+        assert_eq!(
+            espera_debounce(Duration::ZERO),
+            Some(Duration::from_secs(2))
+        );
+        assert_eq!(
+            espera_debounce(Duration::from_millis(4_500)),
+            Some(Duration::from_millis(500))
+        );
+        assert_eq!(espera_debounce(Duration::from_secs(5)), None);
+        assert_eq!(espera_debounce(Duration::from_secs(6)), None);
     }
 }
