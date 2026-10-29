@@ -102,6 +102,8 @@ enum Escrito {
     Cambiado,
     Igual,
     Omitido,
+    /// La versión nueva tiene menos mensajes que la indexada: (antes, ahora). No se escribe nada.
+    Encogido(i64, i64),
 }
 
 /// Escribe la conversación en una transacción. `pendientes` recibe los hijos cuyo padre aún no existe.
@@ -136,6 +138,18 @@ fn escribir(
     if let Some((_, Some(h), Some(r))) = &previo {
         if *h == nueva && *r == ruta_txt {
             return Ok(Escrito::Igual);
+        }
+    }
+    // La tablilla solo crece: si la nueva versión trae menos mensajes, se conserva la indexada.
+    if let Some((id_previo, _, _)) = &previo {
+        let antes: i64 = conn.query_row(
+            "SELECT count(*) FROM mensajes WHERE conversacion_id=?1",
+            [id_previo],
+            |f| f.get(0),
+        )?;
+        let ahora = conv.mensajes.len() as i64;
+        if ahora < antes {
+            return Ok(Escrito::Encogido(antes, ahora));
         }
     }
     let proyecto = conv
@@ -204,15 +218,50 @@ fn escribir(
     Ok(if previo.is_some() { Escrito::Cambiado } else { Escrito::Nuevo })
 }
 
-/// Copia atómica del original a `home/copias/claude-code/<ruta relativa a la raíz>`.
-/// La ruta relativa sale de `descubrir` (strip_prefix de la raíz), nunca del contenido del JSON.
-fn copiar_original(rutas: &Rutas, origen: &Path) -> Result<(), String> {
+/// Segundos Unix → `AAAAMMDDTHHMMSSZ` (UTC, calendario civil).
+fn marca_utc(segs: u64) -> String {
+    let (dias, resto) = ((segs / 86_400) as i64, segs % 86_400);
+    let z = dias + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", resto / 3_600, resto % 3_600 / 60, resto % 60)
+}
+
+fn destino_copia(rutas: &Rutas, fuente: Fuente, origen: &Path) -> Result<PathBuf, String> {
+    let (raiz, carpeta) = match fuente {
+        Fuente::ClaudeCode => (&rutas.claude, "claude-code"),
+        Fuente::Codex => (&rutas.codex, "codex"),
+    };
     let rel = origen
-        .strip_prefix(&rutas.claude)
+        .strip_prefix(raiz)
         .map_err(|e| format!("ruta fuera de la raíz: {e}"))?;
-    let destino = rutas.home.join("copias/claude-code").join(rel);
-    let dir = destino.parent().ok_or("ruta sin carpeta")?;
-    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    Ok(rutas.home.join("copias").join(carpeta).join(rel))
+}
+
+/// Copia atómica del original a `home/copias/<fuente>/<ruta relativa a la raíz de esa fuente>`.
+/// La ruta relativa sale de `descubrir` (strip_prefix de la raíz), nunca del contenido del JSON.
+/// Los bytes se copian tal cual (un `.jsonl.zst` sigue siendo `.zst`). Si el original es más pequeño
+/// que la copia ya guardada, la copia no se pisa: la versión nueva va al lado como `.encogido-<UTC>`.
+fn copiar_original(rutas: &Rutas, fuente: Fuente, origen: &Path) -> Result<(), String> {
+    let mut destino = destino_copia(rutas, fuente, origen)?;
+    let dir = destino.parent().ok_or("ruta sin carpeta")?.to_path_buf();
+    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let tam_origen = fs::metadata(origen).map_err(|e| format!("{}: {e}", origen.display()))?.len();
+    if fs::metadata(&destino).is_ok_and(|m| m.len() > tam_origen) {
+        let ahora = std::time::SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let mut nombre = destino.file_name().ok_or("ruta sin nombre")?.to_os_string();
+        nombre.push(format!(".encogido-{}", marca_utc(ahora)));
+        destino = dir.join(nombre);
+    }
     let mut tmp = destino.clone().into_os_string();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
@@ -275,13 +324,14 @@ pub fn indexar(
 
     for (i, c) in candidatos.iter().enumerate() {
         let clave = c.ruta.to_string_lossy().to_string();
-        let sin_cambios = vistos_tamano.get(&clave) == Some(&(c.tamano, c.mtime));
+        // Sin cambios solo si además la copia existe: así los archivos ya indexados antes de que
+        // existiera la copia (p. ej. Codex) se copian en la siguiente pasada.
+        let sin_cambios = vistos_tamano.get(&clave) == Some(&(c.tamano, c.mtime))
+            && destino_copia(rutas, c.fuente, &c.ruta).is_ok_and(|d| d.exists());
         if !sin_cambios {
-            let fallo_copia = if c.fuente == Fuente::ClaudeCode {
-                copiar_original(rutas, &c.ruta).err().map(|e| format!("copia: {e}"))
-            } else {
-                None
-            };
+            let fallo_copia = copiar_original(rutas, c.fuente, &c.ruta)
+                .err()
+                .map(|e| format!("copia: {e}"));
             let firma = fallo_copia.is_none();
             match parsear(c) {
                 Err(e) => {
@@ -297,14 +347,28 @@ pub fn indexar(
                         match r {
                             Escrito::Nuevo => nuevos += 1,
                             Escrito::Cambiado => cambiados += 1,
-                            Escrito::Igual | Escrito::Omitido => {}
+                            Escrito::Igual | Escrito::Omitido | Escrito::Encogido(..) => {}
                         }
-                        match &fallo_copia {
-                            Some(f) => {
+                        let encogio = match r {
+                            Escrito::Encogido(antes, ahora) => Some(format!(
+                                "encogió: {antes}→{ahora} mensajes; la versión anterior se conserva"
+                            )),
+                            _ => None,
+                        };
+                        match (&fallo_copia, &encogio) {
+                            (Some(f), e) => {
+                                let msg = match e {
+                                    Some(e) => format!("{f}; {e}"),
+                                    None => f.clone(),
+                                };
                                 errores += 1;
-                                let _ = marcar(conn, c, "error", Some(f), conv.avisos.len(), false);
+                                let _ = marcar(conn, c, "error", Some(&msg), conv.avisos.len(), false);
                             }
-                            None => {
+                            (None, Some(e)) => {
+                                errores += 1;
+                                let _ = marcar(conn, c, "error", Some(e), conv.avisos.len(), true);
+                            }
+                            (None, None) => {
                                 let _ = marcar(conn, c, "ok", None, conv.avisos.len(), true);
                             }
                         }
@@ -337,5 +401,14 @@ fn parsear(c: &Candidato) -> Result<ConversacionParseada, String> {
     match c.fuente {
         Fuente::ClaudeCode => claude_code::parsear(&c.ruta),
         Fuente::Codex => codex::parsear(&c.ruta),
+    }
+}
+
+#[cfg(test)]
+mod pruebas {
+    #[test]
+    fn marca_utc_formato() {
+        assert_eq!(super::marca_utc(0), "19700101T000000Z");
+        assert_eq!(super::marca_utc(1_900_000_000), "20300317T174640Z");
     }
 }

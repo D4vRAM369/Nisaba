@@ -232,3 +232,107 @@ fn zst_corrupto_es_error_en_archivos_sin_panico() {
     assert_eq!(estado, "error");
     assert!(err.unwrap().contains("zstd"));
 }
+
+fn n_mensajes(e: &Entorno) -> i64 {
+    contar(
+        &e.conn,
+        &format!("SELECT count(*) FROM mensajes m JOIN conversaciones c ON c.id=m.conversacion_id WHERE c.id_original='{PRINCIPAL}'"),
+    )
+}
+
+fn fijar_mtime(ruta: &std::path::Path, segs: u64) {
+    let f = fs::OpenOptions::new().write(true).open(ruta).unwrap();
+    f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(segs)).unwrap();
+}
+
+fn copia_principal(e: &Entorno) -> PathBuf {
+    e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl"))
+}
+
+/// Trunca el original a sus 3 primeras líneas, con otra fecha de modificación.
+fn truncar(e: &Entorno) -> String {
+    let ruta = ruta_principal(e);
+    let completo = fs::read_to_string(&ruta).unwrap();
+    let corto: String = completo.lines().take(3).map(|l| format!("{l}\n")).collect();
+    fs::write(&ruta, &corto).unwrap();
+    fijar_mtime(&ruta, 1_900_000_000);
+    corto
+}
+
+#[test]
+fn codex_se_copia() {
+    let mut e = entorno();
+    correr(&mut e);
+    let h = &e.rutas.home;
+    assert!(h.join("copias/codex/sessions/2026/10/01/rollout-2026-10-01T10-00-00-cx01.jsonl").exists());
+    assert!(h.join("copias/codex/archived_sessions/rollout-2026-10-01T10-00-00-cx01.jsonl").exists());
+}
+
+#[test]
+fn original_encogido_no_pisa_copia() {
+    let mut e = entorno();
+    correr(&mut e);
+    let copia = copia_principal(&e);
+    let tam = fs::metadata(&copia).unwrap().len();
+    let corto = truncar(&e);
+    assert!((corto.len() as u64) < tam);
+    correr(&mut e);
+    assert_eq!(fs::metadata(&copia).unwrap().len(), tam);
+    let dir = copia.parent().unwrap();
+    let al_lado: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .flatten()
+        .filter(|f| f.file_name().to_string_lossy().starts_with(&format!("{PRINCIPAL}.jsonl.encogido-")))
+        .collect();
+    assert_eq!(al_lado.len(), 1);
+    assert_eq!(fs::read_to_string(al_lado[0].path()).unwrap(), corto);
+}
+
+#[test]
+fn conversacion_encogida_se_conserva() {
+    let mut e = entorno();
+    correr(&mut e);
+    let antes = n_mensajes(&e);
+    truncar(&e);
+    let r = correr(&mut e);
+    assert!(matches!(r, ResultadoIndexado::Hecho { errores: 1, .. }), "{r:?}");
+    assert_eq!(n_mensajes(&e), antes);
+    let (estado, err): (String, String) = e
+        .conn
+        .query_row(
+            "SELECT estado, error FROM archivos WHERE ruta=?1",
+            [ruta_principal(&e).to_string_lossy()],
+            |f| Ok((f.get(0)?, f.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(estado, "error");
+    assert!(err.starts_with("encogió: "), "{err}");
+    assert!(err.contains("la versión anterior se conserva"), "{err}");
+    match correr(&mut e) {
+        ResultadoIndexado::Hecho { nuevos, cambiados, errores } => assert_eq!((nuevos, cambiados, errores), (0, 0, 0)),
+        o => panic!("{o:?}"),
+    }
+}
+
+#[test]
+fn vuelve_a_crecer_se_acepta() {
+    let mut e = entorno();
+    correr(&mut e);
+    let antes = n_mensajes(&e);
+    let ruta = ruta_principal(&e);
+    let original = fs::read_to_string(&ruta).unwrap();
+    truncar(&e);
+    correr(&mut e);
+    let sin_cortada = &original.trim_end_matches('\n')[..original.trim_end_matches('\n').rfind('\n').unwrap() + 1];
+    let mut s = sin_cortada.to_string();
+    s.push_str(&format!("{{\"type\":\"user\",\"uuid\":\"u99\",\"parentUuid\":\"a2\",\"sessionId\":\"{PRINCIPAL}\",\"cwd\":\"/home/u/Proyectos/Demo\",\"timestamp\":\"2026-10-29T10:00:00.000Z\",\"message\":{{\"role\":\"user\",\"content\":\"Una pregunta nueva sobre el esquema\"}}}}\n"));
+    fs::write(&ruta, s).unwrap();
+    fijar_mtime(&ruta, 1_900_000_100);
+    correr(&mut e);
+    assert_eq!(n_mensajes(&e), antes + 1);
+    let estado: String = e
+        .conn
+        .query_row("SELECT estado FROM archivos WHERE ruta=?1", [ruta.to_string_lossy()], |f| f.get(0))
+        .unwrap();
+    assert_eq!(estado, "ok");
+}
