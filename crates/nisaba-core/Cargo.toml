@@ -2,6 +2,9 @@
 name = "nisaba-core"
 version = "0.1.0"
 edition = "2021"
+authors = ["D4vRAM369"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/D4vRAM369/Nisaba"
 rust-version = "1.89"
 
 [dependencies]

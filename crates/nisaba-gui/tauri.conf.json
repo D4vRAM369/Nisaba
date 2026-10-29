@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Nisaba",
+  "mainBinaryName": "nisaba-gui",
   "version": "0.1.0",
   "identifier": "dev.d4vram.nisaba",
   "build": {
@@ -10,8 +11,47 @@
     "frontendDist": "ui/dist"
   },
   "app": {
-    "windows": [{ "label": "main", "title": "Nisaba · La tablilla", "width": 1200, "height": 800, "minWidth": 800, "minHeight": 500 }],
-    "security": { "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'" }
+    "windows": [
+      {
+        "label": "main",
+        "title": "Nisaba · La tablilla",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 500
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'; form-action 'none'"
+    }
   },
-  "bundle": { "active": true, "targets": ["deb"], "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"] }
+  "bundle": {
+    "active": true,
+    "targets": [
+      "deb",
+      "rpm",
+      "appimage",
+      "nsis",
+      "msi"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installerHooks": "windows/hooks.nsh"
+      }
+    },
+    "category": "Utility",
+    "shortDescription": "Bóveda local de tus conversaciones con IAs",
+    "license": "GPL-3.0-or-later",
+    "publisher": "D4vRAM369",
+    "copyright": "© 2026 D4vRAM369 · GPL-3.0-or-later",
+    "homepage": "https://github.com/D4vRAM369/Nisaba",
+    "longDescription": "Nisaba indexa en local las conversaciones que Claude Code y Codex guardan en disco, para encontrarlas por palabra o frase y releerlas sin ruido desde la ventana, la terminal (nisaba) o desde otra IA vía MCP. Sin red, sin cuentas y sin telemetría."
+  }
 }

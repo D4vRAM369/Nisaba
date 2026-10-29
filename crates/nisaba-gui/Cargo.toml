@@ -2,6 +2,10 @@
 name = "nisaba-gui"
 version = "0.1.0"
 edition = "2021"
+authors = ["D4vRAM369"]
+description = "Bóveda local de tus conversaciones con IAs (Claude Code y Codex)"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/D4vRAM369/Nisaba"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
