@@ -175,6 +175,8 @@ pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
     let mut hoja: Option<String> = None;
     let mut mensajes = Vec::new();
     let mut avisos = Vec::new();
+    // uuid → parentUuid de las líneas con uuid que NO son mensaje (attachment, etc.).
+    let mut saltados: std::collections::HashMap<String, Option<String>> = Default::default();
 
     for (pos, (num, linea)) in lineas.iter().enumerate() {
         let v: Value = match serde_json::from_str(linea) {
@@ -190,6 +192,11 @@ pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
             cwd = texto(&v, "cwd").filter(|s| !s.is_empty());
         }
         let tipo = v.get("type").and_then(Value::as_str).unwrap_or("");
+        if !matches!(tipo, "user" | "assistant" | "system") {
+            if let Some(u) = texto(&v, "uuid") {
+                saltados.insert(u, texto(&v, "parentUuid"));
+            }
+        }
         match tipo {
             "last-prompt" => {
                 if let Some(h) = texto(&v, "leafUuid") {
@@ -238,6 +245,32 @@ pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
         }
     }
 
+    // Los padres pueden ser líneas no indexadas (attachment…) y aparecer después:
+    // se resuelve al final, saltando nodos descartados hasta un mensaje real o null.
+    let conservados: std::collections::HashSet<String> =
+        mensajes.iter().filter_map(|m| m.uuid.clone()).collect();
+    let resolver = |inicio: Option<String>| -> Option<String> {
+        let mut actual = inicio;
+        let mut vistos = std::collections::HashSet::new();
+        while let Some(u) = actual {
+            if conservados.contains(&u) {
+                return Some(u);
+            }
+            if !vistos.insert(u.clone()) {
+                return None; // ciclo
+            }
+            match saltados.get(&u) {
+                Some(p) => actual = p.clone(),
+                None => return Some(u), // desconocido: se deja tal cual
+            }
+        }
+        None
+    };
+    for m in &mut mensajes {
+        m.id_padre = resolver(m.id_padre.take());
+    }
+    let hoja = hoja.map(|h| resolver(Some(h.clone())).unwrap_or(h));
+
     let id_original = if es_subagente {
         stem
     } else {
@@ -280,6 +313,13 @@ mod tests {
         assert_eq!(c.cwd.as_deref(), Some("/home/u/Proyectos/Demo"));
         assert_eq!(c.id_original, SESION);
         assert_eq!(c.hoja.as_deref(), Some("a2"));
+    }
+
+    #[test]
+    fn padre_salta_attachment() {
+        let c = principal();
+        let a1 = c.mensajes.iter().find(|m| m.uuid.as_deref() == Some("a1")).unwrap();
+        assert_eq!(a1.id_padre.as_deref(), Some("u2"));
     }
 
     #[test]

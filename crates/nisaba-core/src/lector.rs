@@ -59,6 +59,8 @@ struct Hijo {
 }
 
 /// Conserva solo el camino desde la hoja hacia atrás. Sin `uuid`: todos.
+/// Supuesto: Claude siempre trae uuid y Codex nunca, así que si alguno lo tiene
+/// los mensajes sin uuid se descartan.
 fn rama_activa(msgs: Vec<Msg>, hoja: Option<&str>) -> Vec<Msg> {
     if !msgs.iter().any(|m| m.uuid.is_some()) {
         return msgs;
@@ -78,6 +80,11 @@ fn rama_activa(msgs: Vec<Msg>, hoja: Option<&str>) -> Vec<Msg> {
             break; // ciclo
         }
         actual = msgs[i].id_padre.as_deref().and_then(|p| por_uuid.get(p).copied());
+        if actual.is_none() && msgs[i].id_padre.is_some() {
+            // Padre ausente (cadena rota): no se trunca; se añaden los mensajes
+            // con uuid que van antes en `orden`.
+            camino.extend((0..i).filter(|&j| msgs[j].uuid.is_some()));
+        }
     }
     msgs.into_iter()
         .enumerate()

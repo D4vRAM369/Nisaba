@@ -115,3 +115,37 @@ fn markdown_indica_siguiente_tramo() {
     assert!(md.trim_end().ends_with("--desde 50"), "{md}");
     assert!(md.contains("nisaba ver cc-sintetic --desde 50"), "{md}");
 }
+
+#[test]
+fn rama_atraviesa_attachment() {
+    let e = indexado();
+    let l = leer(&e.conn, id_de(&e, "cc-a1b2c3d4"), &Tramo::default()).unwrap();
+    assert!(matches!(l.bloques.first(), Some(Bloque::Usuario { .. })), "{:#?}", l.bloques);
+    assert_eq!(l.total, 5);
+}
+
+#[test]
+fn padre_ausente_no_trunca() {
+    let e = entorno();
+    e.conn.execute(
+        "INSERT INTO conversaciones(fuente, id_original, titulo, hoja) VALUES ('claude-code','rota-00001','Rota','m4')",
+        [],
+    ).unwrap();
+    let cid = e.conn.last_insert_rowid();
+    // m3 apunta a "fantasma", que no está indexado.
+    for (i, (uuid, padre)) in [("m1", None), ("m2", Some("m1")), ("m3", Some("fantasma")), ("m4", Some("m3"))]
+        .into_iter().enumerate()
+    {
+        e.conn.execute(
+            "INSERT INTO mensajes(conversacion_id, orden, uuid, id_padre, rol, oculto) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+            rusqlite::params![cid, i as i64, uuid, padre, if i % 2 == 0 { "usuario" } else { "asistente" }],
+        ).unwrap();
+        let mid = e.conn.last_insert_rowid();
+        e.conn.execute(
+            "INSERT INTO partes(mensaje_id, orden, tipo, contenido) VALUES (?1, 0, 'texto', ?2)",
+            rusqlite::params![mid, format!("texto {uuid}")],
+        ).unwrap();
+    }
+    let l = leer(&e.conn, cid, &Tramo::default()).unwrap();
+    assert_eq!(l.total, 4, "{:#?}", l.bloques);
+}
