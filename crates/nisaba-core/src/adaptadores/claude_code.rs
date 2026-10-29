@@ -1,9 +1,7 @@
+use super::{avisar, recortar};
 use crate::modelo::*;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
-
-const MAX_HERRAMIENTA: usize = 64 * 1024;
-const SUFIJO_RECORTE: &str = "\n…[recortado]";
 
 const TIPOS_IGNORADOS: &[&str] = &[
     "attachment",
@@ -51,25 +49,6 @@ fn recorrer(dir: &Path, salida: &mut Vec<PathBuf>) {
         } else if tipo.is_file() && ruta.extension().is_some_and(|x| x == "jsonl") {
             salida.push(ruta);
         }
-    }
-}
-
-fn recortar(mut s: String) -> String {
-    if s.len() <= MAX_HERRAMIENTA {
-        return s;
-    }
-    let mut corte = MAX_HERRAMIENTA;
-    while !s.is_char_boundary(corte) {
-        corte -= 1;
-    }
-    s.truncate(corte);
-    s.push_str(SUFIJO_RECORTE);
-    s
-}
-
-fn avisar(avisos: &mut Vec<String>, texto: String) {
-    if !avisos.contains(&texto) {
-        avisos.push(texto);
     }
 }
 

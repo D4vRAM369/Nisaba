@@ -1,0 +1,346 @@
+use super::{avisar, recortar};
+use crate::modelo::*;
+use serde_json::Value;
+use std::path::{Path, PathBuf};
+
+const TIPOS_IGNORADOS: &[&str] = &[
+    "session_meta",
+    "event_msg",
+    "turn_context",
+    "world_state",
+    "token_usage_record",
+];
+
+const PREFIJOS_OCULTOS: &[&str] = &[
+    "# AGENTS.md instructions",
+    "<environment_context>",
+    "<INSTRUCTIONS>",
+    "The following is the Code",
+    "<external_",
+    "<task-notification>",
+    "<command-message>",
+    "<send_user_message_",
+    "[external unsupported",
+];
+
+/// `rollout-*.jsonl` bajo `raiz/sessions` y `raiz/archived_sessions`, ordenados.
+pub fn descubrir(raiz: &Path) -> Vec<PathBuf> {
+    let mut salida = Vec::new();
+    for sub in ["sessions", "archived_sessions"] {
+        recorrer(&raiz.join(sub), &mut salida);
+    }
+    salida.sort();
+    salida
+}
+
+fn recorrer(dir: &Path, salida: &mut Vec<PathBuf>) {
+    let Ok(entradas) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entradas.flatten() {
+        let ruta = e.path();
+        let Ok(tipo) = e.file_type() else { continue };
+        if tipo.is_dir() {
+            recorrer(&ruta, salida);
+        } else if tipo.is_file() {
+            let nombre = ruta.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if nombre.starts_with("rollout-") && nombre.ends_with(".jsonl") {
+                salida.push(ruta);
+            }
+        }
+    }
+}
+
+fn texto(v: &Value, clave: &str) -> Option<String> {
+    v.get(clave).and_then(Value::as_str).map(str::to_string)
+}
+
+/// Une los `text` de una lista de bloques; si es un string, lo devuelve tal cual.
+fn texto_bloques(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(bloques)) => bloques
+            .iter()
+            .filter_map(|b| b.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn parte(tipo: TipoParte, contenido: String) -> Vec<Parte> {
+    vec![Parte { tipo, contenido }]
+}
+
+pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
+    let bytes = std::fs::read(ruta).map_err(|e| format!("{}: {e}", ruta.display()))?;
+    let contenido = String::from_utf8_lossy(&bytes);
+    let lineas: Vec<(usize, &str)> = contenido
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty())
+        .collect();
+
+    let mut id_original: Option<String> = None;
+    let mut cwd: Option<String> = None;
+    let mut modelo: Option<String> = None;
+    let mut mensajes = Vec::new();
+    let mut avisos = Vec::new();
+
+    for (pos, (num, linea)) in lineas.iter().enumerate() {
+        let v: Value = match serde_json::from_str(linea) {
+            Ok(v) => v,
+            // La última línea puede estar escribiéndose todavía.
+            Err(_) if pos == lineas.len() - 1 => continue,
+            Err(e) => return Err(format!("línea {}: {e}", num + 1)),
+        };
+        let tipo = v.get("type").and_then(Value::as_str).unwrap_or("");
+        let payload = v.get("payload").unwrap_or(&Value::Null);
+        let hora = texto(&v, "timestamp");
+
+        match tipo {
+            "session_meta" => {
+                if id_original.is_none() {
+                    id_original = texto(payload, "id").filter(|s| !s.is_empty());
+                    cwd = texto(payload, "cwd").filter(|s| !s.is_empty());
+                }
+            }
+            "event_msg" => {
+                if payload.get("type").and_then(Value::as_str) == Some("thread_settings_applied") {
+                    if let Some(m) = payload
+                        .pointer("/thread_settings/model")
+                        .and_then(Value::as_str)
+                    {
+                        modelo = Some(m.to_string());
+                    }
+                }
+            }
+            "response_item" => {
+                let ptipo = payload.get("type").and_then(Value::as_str).unwrap_or("");
+                let (rol, partes, oculto) = match ptipo {
+                    "message" => {
+                        let rol = match payload.get("role").and_then(Value::as_str) {
+                            Some("user") => Rol::Usuario,
+                            Some("assistant") => Rol::Asistente,
+                            Some("developer") => Rol::Sistema,
+                            otro => {
+                                avisar(
+                                    &mut avisos,
+                                    format!("rol desconocido: {}", otro.unwrap_or("?")),
+                                );
+                                continue;
+                            }
+                        };
+                        let t = texto_bloques(payload.get("content"));
+                        let oculto = rol == Rol::Sistema
+                            || (rol == Rol::Usuario && {
+                                let ini = t.trim_start();
+                                PREFIJOS_OCULTOS.iter().any(|p| ini.starts_with(p))
+                            });
+                        let tp = if rol == Rol::Sistema {
+                            TipoParte::Sistema
+                        } else {
+                            TipoParte::Texto
+                        };
+                        (rol, parte(tp, t), oculto)
+                    }
+                    "reasoning" => {
+                        let t = texto_bloques(payload.get("summary"));
+                        if t.is_empty() {
+                            continue;
+                        }
+                        (Rol::Asistente, parte(TipoParte::Razonamiento, t), false)
+                    }
+                    "function_call" | "custom_tool_call" => {
+                        let nombre = payload.get("name").and_then(Value::as_str).unwrap_or("?");
+                        let args = texto_bloques(payload.get("arguments").or(payload.get("input")));
+                        (
+                            Rol::Asistente,
+                            parte(
+                                TipoParte::Herramienta,
+                                recortar(format!("{nombre}: {args}")),
+                            ),
+                            false,
+                        )
+                    }
+                    "function_call_output" | "custom_tool_call_output" => (
+                        Rol::Usuario,
+                        parte(
+                            TipoParte::Herramienta,
+                            recortar(texto_bloques(payload.get("output"))),
+                        ),
+                        false,
+                    ),
+                    "additional_tools" => continue,
+                    otro => {
+                        avisar(&mut avisos, format!("tipo desconocido: {otro}"));
+                        continue;
+                    }
+                };
+                mensajes.push(Mensaje {
+                    uuid: None,
+                    id_padre: None,
+                    rol,
+                    modelo: modelo.clone(),
+                    hora,
+                    oculto,
+                    partes,
+                });
+            }
+            t if TIPOS_IGNORADOS.contains(&t) => {}
+            otro => avisar(&mut avisos, format!("tipo desconocido: {otro}")),
+        }
+    }
+
+    let id_original = id_original.ok_or_else(|| "sin session_meta".to_string())?;
+    Ok(ConversacionParseada {
+        fuente: Fuente::Codex,
+        id_original,
+        cwd,
+        padre_original: None,
+        descripcion: None,
+        hoja: None,
+        mensajes,
+        avisos,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raiz() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/codex")
+    }
+    fn principal() -> ConversacionParseada {
+        parsear(&raiz().join("sessions/2026/10/01/rollout-2026-10-01T10-00-00-cx01.jsonl")).unwrap()
+    }
+
+    #[test]
+    fn parsea_codex() {
+        let c = principal();
+        assert_eq!(c.fuente, Fuente::Codex);
+        assert_eq!(c.id_original, "cx01");
+        assert_eq!(c.cwd.as_deref(), Some("/home/u/Proyectos/Mirlo"));
+        let visibles: Vec<_> = c
+            .mensajes
+            .iter()
+            .filter(|m| !m.oculto && m.partes.iter().any(|p| p.tipo == TipoParte::Texto))
+            .collect();
+        assert_eq!(visibles.len(), 2);
+        assert_eq!(visibles[0].rol, Rol::Usuario);
+        assert_eq!(
+            visibles[0].partes[0].contenido,
+            "Arregla el parseo de subtítulos en Mirlo"
+        );
+        assert_eq!(visibles[1].rol, Rol::Asistente);
+        assert_eq!(visibles[1].modelo.as_deref(), Some("gpt-6.1-sol"));
+        assert!(c.avisos.is_empty(), "{:?}", c.avisos);
+        assert!(c.mensajes.iter().flat_map(|m| &m.partes).any(|p| {
+            p.tipo == TipoParte::Herramienta && p.contenido == "exec: grep -n srt src/lib.rs"
+        }));
+        assert!(c
+            .mensajes
+            .iter()
+            .flat_map(|m| &m.partes)
+            .any(|p| p.tipo == TipoParte::Herramienta && p.contenido == "42:fn parse_srt()"));
+    }
+
+    #[test]
+    fn oculta_agents_md() {
+        let c = principal();
+        let m = c
+            .mensajes
+            .iter()
+            .find(|m| {
+                m.partes
+                    .iter()
+                    .any(|p| p.contenido.starts_with("# AGENTS.md"))
+            })
+            .unwrap();
+        assert!(m.oculto);
+        let d = c.mensajes.iter().find(|m| m.rol == Rol::Sistema).unwrap();
+        assert!(d.oculto);
+    }
+
+    #[test]
+    fn razonamiento_con_summary() {
+        let c = principal();
+        let r: Vec<_> = c
+            .mensajes
+            .iter()
+            .flat_map(|m| &m.partes)
+            .filter(|p| p.tipo == TipoParte::Razonamiento)
+            .collect();
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].contenido, "Pienso en el SRT");
+    }
+
+    #[test]
+    fn sin_session_meta_es_error() {
+        let d = tempfile::tempdir().unwrap();
+        let ruta = d.path().join("rollout-x.jsonl");
+        std::fs::write(
+            &ruta,
+            r#"{"type":"event_msg","payload":{"type":"x"}}"#.to_string() + "\n",
+        )
+        .unwrap();
+        assert_eq!(parsear(&ruta).unwrap_err(), "sin session_meta");
+    }
+
+    #[test]
+    fn json_roto_en_medio_es_error() {
+        let d = tempfile::tempdir().unwrap();
+        let ruta = d.path().join("rollout-x.jsonl");
+        std::fs::write(&ruta, "{\"type\":\"session_meta\",\"payload\":{\"id\":\"a\"}}\n{roto\n{\"type\":\"event_msg\"}\n").unwrap();
+        assert!(parsear(&ruta).unwrap_err().contains("línea 2"));
+        // Última línea rota: se ignora.
+        std::fs::write(
+            &ruta,
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"a\"}}\n{roto\n",
+        )
+        .unwrap();
+        assert_eq!(parsear(&ruta).unwrap().id_original, "a");
+    }
+
+    #[test]
+    fn avisa_tipos_desconocidos_una_vez() {
+        let d = tempfile::tempdir().unwrap();
+        let ruta = d.path().join("rollout-x.jsonl");
+        let t = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"a\"}}\n",
+            "{\"type\":\"raro\"}\n{\"type\":\"raro\"}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"additional_tools\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"otro_item\"}}\n",
+            "{\"type\":\"turn_context\",\"payload\":{}}\n",
+        );
+        std::fs::write(&ruta, t).unwrap();
+        assert_eq!(
+            parsear(&ruta).unwrap().avisos,
+            vec!["tipo desconocido: raro", "tipo desconocido: otro_item"]
+        );
+    }
+
+    #[test]
+    fn function_call_y_recorte() {
+        let d = tempfile::tempdir().unwrap();
+        let ruta = d.path().join("rollout-x.jsonl");
+        let grande = "y".repeat(100_000);
+        let t = format!(
+            "{{\"type\":\"session_meta\",\"payload\":{{\"id\":\"a\"}}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call\",\"name\":\"sh\",\"arguments\":\"{{}}\"}}}}\n{{\"type\":\"response_item\",\"payload\":{{\"type\":\"function_call_output\",\"output\":\"{grande}\"}}}}\n"
+        );
+        std::fs::write(&ruta, t).unwrap();
+        let c = parsear(&ruta).unwrap();
+        assert_eq!(c.mensajes[0].rol, Rol::Asistente);
+        assert_eq!(c.mensajes[0].partes[0].contenido, "sh: {}");
+        assert_eq!(c.mensajes[1].rol, Rol::Usuario);
+        assert!(c.mensajes[1].partes[0]
+            .contenido
+            .ends_with("\n…[recortado]"));
+    }
+
+    #[test]
+    fn descubrir_ambas_carpetas() {
+        assert_eq!(descubrir(&raiz()).len(), 2);
+    }
+}
