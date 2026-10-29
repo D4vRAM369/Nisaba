@@ -7,3 +7,5 @@ node_modules/
 crates/nisaba-gui/ui/dist/
 crates/nisaba-gui/gen/
 crates/nisaba-gui/binaries/
+flatpak/nisaba-deb/
+flatpak/.flatpak-builder/

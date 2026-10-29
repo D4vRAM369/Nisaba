@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  paquetes:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dependencias de sistema (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: crates/nisaba-gui/ui/package-lock.json
+      - name: Dependencias del frontend
+        run: npm ci --prefix crates/nisaba-gui/ui
+
+      - name: CLI como sidecar
+        run: |
+          cargo build --release -p nisaba-cli
+          node crates/nisaba-gui/scripts/preparar-sidecar.mjs
+
+      - uses: tauri-apps/tauri-action@v0
+        with:
+          projectPath: crates/nisaba-gui
+          tauriScript: npm --prefix ui run tauri --
+          args: --config tauri.release.conf.json
+          tagName: ${{ github.ref_name }}
+          releaseName: Nisaba ${{ github.ref_name }}
+          releaseBody: Prerelease. Instrucciones de instalación en el README.
+          releaseDraft: true
+          prerelease: true
+
+      - name: Zip portable (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v')
+          $zip = "Nisaba_${version}_x64_portable.zip"
+          Compress-Archive -Path target/release/nisaba-gui.exe, target/release/nisaba.exe, flatpak/portable -DestinationPath $zip
+          gh release upload "${{ github.ref_name }}" $zip --clobber
+
+      - name: Extraer el .deb para Flatpak (Linux)
+        if: runner.os == 'Linux'
+        run: dpkg-deb -x target/release/bundle/deb/*.deb flatpak/nisaba-deb
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: nisaba-deb
+          path: flatpak/nisaba-deb
+
+  flatpak:
+    needs: paquetes
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: nisaba-deb
+          path: flatpak/nisaba-deb
+      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        with:
+          bundle: Nisaba_x86_64.flatpak
+          manifest-path: flatpak/dev.d4vram.nisaba.yml
+          upload-artifact: true
+
+  subir-flatpak:
+    needs: flatpak
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*flatpak*'
+          merge-multiple: true
+      - name: Subir el .flatpak al borrador
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mv Nisaba_x86_64.flatpak "Nisaba_${version}_x86_64.flatpak"
+          gh release upload "$GITHUB_REF_NAME" "Nisaba_${version}_x86_64.flatpak" --clobber --repo "$GITHUB_REPOSITORY"

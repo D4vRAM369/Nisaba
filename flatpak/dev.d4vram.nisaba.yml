@@ -1,0 +1,28 @@
+# Flatpak de Nisaba montado a partir del .deb ya construido (no compila desde las fuentes).
+# Antes: dpkg-deb -x Nisaba_<versión>_amd64.deb flatpak/nisaba-deb
+app-id: dev.d4vram.nisaba
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+command: nisaba-gui
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Solo lectura: Nisaba nunca escribe en las carpetas de las herramientas.
+  - --filesystem=~/.claude:ro
+  - --filesystem=~/.codex:ro
+modules:
+  - name: nisaba
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: nisaba-deb
+    build-commands:
+      - install -Dm755 usr/bin/nisaba-gui /app/bin/nisaba-gui
+      - install -Dm755 usr/bin/nisaba /app/bin/nisaba
+      - install -Dm644 usr/share/icons/hicolor/128x128/apps/nisaba-gui.png /app/share/icons/hicolor/128x128/apps/dev.d4vram.nisaba.png
+      - install -Dm644 usr/share/icons/hicolor/32x32/apps/nisaba-gui.png /app/share/icons/hicolor/32x32/apps/dev.d4vram.nisaba.png
+      - sed -e 's/^Icon=.*/Icon=dev.d4vram.nisaba/' usr/share/applications/Nisaba.desktop > dev.d4vram.nisaba.desktop
+      - install -Dm644 dev.d4vram.nisaba.desktop /app/share/applications/dev.d4vram.nisaba.desktop
