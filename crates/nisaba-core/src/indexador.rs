@@ -5,7 +5,7 @@ use crate::{dir_claude, dir_codex, nisaba_home};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, UNIX_EPOCH};
 
@@ -28,10 +28,13 @@ pub struct Progreso {
     pub total: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResultadoIndexado {
     Hecho { nuevos: usize, cambiados: usize, errores: usize },
+    /// Otro proceso está indexando (el bloqueo está tomado).
     Ocupado,
+    /// Fallo real de E/S al preparar la pasada (carpeta o bloqueo).
+    Fallo(String),
 }
 
 struct Candidato {
@@ -73,6 +76,7 @@ fn marcar(
     estado: &str,
     error: Option<&str>,
     avisos: usize,
+    con_firma: bool,
 ) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO archivos(ruta, fuente, tamano, mtime, estado, error, avisos, visto)
@@ -83,8 +87,8 @@ fn marcar(
         params![
             c.ruta.to_string_lossy(),
             c.fuente.as_str(),
-            c.tamano,
-            c.mtime,
+            con_firma.then_some(c.tamano),
+            con_firma.then_some(c.mtime),
             estado,
             error,
             avisos as i64
@@ -200,12 +204,23 @@ fn escribir(
     Ok(if previo.is_some() { Escrito::Cambiado } else { Escrito::Nuevo })
 }
 
-fn copiar_original(rutas: &Rutas, origen: &Path, id_original: &str) {
-    let dir = rutas.home.join("copias/claude-code");
-    if fs::create_dir_all(&dir).is_ok() {
-        // Fallo de copia: no bloquea el índice; el original sigue ahí.
-        let _ = fs::copy(origen, dir.join(format!("{id_original}.jsonl")));
-    }
+/// Copia atómica del original a `home/copias/claude-code/<ruta relativa a la raíz>`.
+/// La ruta relativa sale de `descubrir` (strip_prefix de la raíz), nunca del contenido del JSON.
+fn copiar_original(rutas: &Rutas, origen: &Path) -> Result<(), String> {
+    let rel = origen
+        .strip_prefix(&rutas.claude)
+        .map_err(|e| format!("ruta fuera de la raíz: {e}"))?;
+    let destino = rutas.home.join("copias/claude-code").join(rel);
+    let dir = destino.parent().ok_or("ruta sin carpeta")?;
+    fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut tmp = destino.clone().into_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    fs::copy(origen, &tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
+    fs::rename(&tmp, &destino).map_err(|e| {
+        let _ = fs::remove_file(&tmp);
+        format!("{}: {e}", destino.display())
+    })
 }
 
 pub fn indexar(
@@ -213,8 +228,8 @@ pub fn indexar(
     rutas: &Rutas,
     progreso: &mut dyn FnMut(Progreso),
 ) -> ResultadoIndexado {
-    if fs::create_dir_all(&rutas.home).is_err() {
-        return ResultadoIndexado::Ocupado;
+    if let Err(e) = fs::create_dir_all(&rutas.home) {
+        return ResultadoIndexado::Fallo(format!("{}: {e}", rutas.home.display()));
     }
     let lock = match OpenOptions::new()
         .create(true)
@@ -223,10 +238,12 @@ pub fn indexar(
         .open(rutas.home.join("index.lock"))
     {
         Ok(f) => f,
-        Err(_) => return ResultadoIndexado::Ocupado,
+        Err(e) => return ResultadoIndexado::Fallo(format!("index.lock: {e}")),
     };
-    if lock.try_lock().is_err() {
-        return ResultadoIndexado::Ocupado;
+    match lock.try_lock() {
+        Ok(()) => {}
+        Err(TryLockError::WouldBlock) => return ResultadoIndexado::Ocupado,
+        Err(TryLockError::Error(e)) => return ResultadoIndexado::Fallo(format!("index.lock: {e}")),
     }
 
     let mut candidatos: Vec<Candidato> = Vec::new();
@@ -260,10 +277,20 @@ pub fn indexar(
         let clave = c.ruta.to_string_lossy().to_string();
         let sin_cambios = vistos_tamano.get(&clave) == Some(&(c.tamano, c.mtime));
         if !sin_cambios {
+            let fallo_copia = if c.fuente == Fuente::ClaudeCode {
+                copiar_original(rutas, &c.ruta).err().map(|e| format!("copia: {e}"))
+            } else {
+                None
+            };
+            let firma = fallo_copia.is_none();
             match parsear(c) {
                 Err(e) => {
                     errores += 1;
-                    let _ = marcar(conn, c, "error", Some(&e), 0);
+                    let msg = match &fallo_copia {
+                        Some(f) => format!("{f}; {e}"),
+                        None => e,
+                    };
+                    let _ = marcar(conn, c, "error", Some(&msg), 0, firma);
                 }
                 Ok(conv) => match escribir(conn, c, &conv, &mut pendientes) {
                     Ok(r) => {
@@ -272,14 +299,19 @@ pub fn indexar(
                             Escrito::Cambiado => cambiados += 1,
                             Escrito::Igual | Escrito::Omitido => {}
                         }
-                        if c.fuente == Fuente::ClaudeCode && !matches!(r, Escrito::Omitido) {
-                            copiar_original(rutas, &c.ruta, &conv.id_original);
+                        match &fallo_copia {
+                            Some(f) => {
+                                errores += 1;
+                                let _ = marcar(conn, c, "error", Some(f), conv.avisos.len(), false);
+                            }
+                            None => {
+                                let _ = marcar(conn, c, "ok", None, conv.avisos.len(), true);
+                            }
                         }
-                        let _ = marcar(conn, c, "ok", None, conv.avisos.len());
                     }
                     Err(e) => {
                         errores += 1;
-                        let _ = marcar(conn, c, "error", Some(&format!("base de datos: {e}")), 0);
+                        let _ = marcar(conn, c, "error", Some(&format!("base de datos: {e}")), 0, firma);
                     }
                 },
             }

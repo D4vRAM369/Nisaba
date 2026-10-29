@@ -82,7 +82,7 @@ fn indexa_fixtures() {
         .query_row("SELECT proyecto FROM conversaciones WHERE id_original=?1", [PRINCIPAL], |f| f.get(0))
         .unwrap();
     assert_eq!(proyecto, "Demo");
-    assert!(e.rutas.home.join(format!("copias/claude-code/{PRINCIPAL}.jsonl")).exists());
+    assert!(e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl")).exists());
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn fuente_borrada_se_conserva() {
         contar(&e.conn, &format!("SELECT count(*) FROM conversaciones WHERE id_original='{PRINCIPAL}'")),
         1
     );
-    assert!(e.rutas.home.join(format!("copias/claude-code/{PRINCIPAL}.jsonl")).exists());
+    assert!(e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl")).exists());
 }
 
 #[test]
@@ -180,4 +180,36 @@ fn titulo_salta_genericos() {
     );
     assert_eq!(titulo_util(None, &[]), "sin proyecto · (sin título)");
     assert_eq!(titulo_util(Some("X"), &[usuario("ok")]), "X · (sin título)");
+}
+
+#[test]
+fn copia_fallida_se_reintenta() {
+    let mut e = entorno();
+    fs::create_dir_all(e.rutas.home.join("copias")).unwrap();
+    fs::write(e.rutas.home.join("copias/claude-code"), "obstáculo").unwrap();
+    let r = correr(&mut e);
+    assert!(matches!(r, ResultadoIndexado::Hecho { errores, .. } if errores >= 1), "{r:?}");
+    let estado: String = e
+        .conn
+        .query_row("SELECT estado FROM archivos WHERE ruta=?1", [ruta_principal(&e).to_string_lossy()], |f| f.get(0))
+        .unwrap();
+    assert_eq!(estado, "error");
+    let msg: String = e
+        .conn
+        .query_row("SELECT error FROM archivos WHERE ruta=?1", [ruta_principal(&e).to_string_lossy()], |f| f.get(0))
+        .unwrap();
+    assert!(msg.starts_with("copia: "), "{msg}");
+    fs::remove_file(e.rutas.home.join("copias/claude-code")).unwrap();
+    correr(&mut e);
+    assert!(e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl")).exists());
+    assert!(e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}/subagents/agent-zz.jsonl")).exists());
+}
+
+#[test]
+fn fallo_si_home_es_un_archivo() {
+    let mut e = entorno();
+    let f = e._dir.path().join("archivo");
+    fs::write(&f, "x").unwrap();
+    e.rutas.home = f;
+    assert!(matches!(correr(&mut e), ResultadoIndexado::Fallo(_)));
 }
