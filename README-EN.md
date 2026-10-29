@@ -17,7 +17,7 @@ Find what you discussed with Claude Code or Codex by word or phrase, and reread 
 
 ## Why this project?
 
-I work with several AIs every day. What I learned and decided with them ends up scattered across different formats and folders, and part of it gets lost: **Claude Code deletes sessions older than 30 days by default**. When I want to get back to "that conversation where we solved X", I end up running `grep` over unreadable JSON files, or I give up.
+I work with several AIs every day. What I learned and decided with them ends up scattered across different formats and folders, and part of it gets lost: **Claude Code deletes sessions older than 30 days by default**. I wanted a place on my own PC where I could get to my conversations with the AIs I use most, without depending on their official websites.
 
 Nisaba reads the sessions those tools already keep on your disk, indexes them and lets you **search and reread them nicely formatted**: your messages, the answers, code and Markdown, without walls of tool calls. If a source deletes a session, the tablet keeps it: **the tablet only grows**.
 
