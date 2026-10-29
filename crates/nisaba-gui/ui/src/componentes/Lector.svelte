@@ -3,7 +3,9 @@
   import { textos } from '../lib/textos';
   import { leer, type Lectura } from '../lib/api';
   import Bloque from './Bloque.svelte';
-  let { idPublico, alrededorDe, abrir }: { idPublico: string; alrededorDe?: number; abrir: (id: string) => void } = $props();
+  import Exportar from './Exportar.svelte';
+  import Origen from './Origen.svelte';
+  let { idPublico, alrededorDe, abrir, noIndexar }: { idPublico: string; alrededorDe?: number; abrir: (id: string) => void; noIndexar: (carpeta: string) => void } = $props();
   let lectura = $state<Lectura | null>(null);
   let todo = $state(false);
   let cargando = $state(false);
@@ -26,7 +28,7 @@
   }
   $effect(() => { idPublico; alrededorDe; todo; void cargar(); });
 </script>
-<header class="cabecera-lector"><div><span class="etiqueta">{textos.soloConversacion}</span><h2>{lectura?.titulo || textos.cargando}</h2><span class="id-conversacion">{idPublico}</span></div><label class="ver-todo"><input type="checkbox" bind:checked={todo} />{textos.verTodo}</label></header>
+<header class="cabecera-lector"><div><span class="etiqueta">{textos.soloConversacion}</span><h2>{lectura?.titulo || textos.cargando}</h2><span class="id-conversacion">{idPublico}</span><Origen {idPublico} {noIndexar} /></div><div class="acciones-lector"><label class="ver-todo"><input type="checkbox" bind:checked={todo} />{textos.verTodo}</label><Exportar {idPublico} {todo} /></div></header>
 <div class="cuerpo-lector" bind:this={cuerpo!} aria-busy={cargando}>
   {#if error}<p class="error-lector" role="alert">{error}</p>{/if}
   {#if cargando && !lectura}<p class="aviso-contenido" role="status">{textos.cargando}</p>{/if}
