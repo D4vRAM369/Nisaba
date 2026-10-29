@@ -1,0 +1,2 @@
+:root { color-scheme: dark; --fondo: #0b1426; --panel: #101d34; --elevado: #15253e; --borde: #24344d; --texto: #e5e4df; --suave: #9ba9bb; --oro: #d4ae65; --azul: #213f80; --claude: #ba8c77; --codex: #75a79f; font-family: 'IBM Plex Sans', sans-serif; color: var(--texto); background: var(--fondo); }
+* { box-sizing: border-box; } body { margin: 0; } h1 { font-family: 'Cormorant Garamond', serif; font-weight: 500; letter-spacing: .15em; color: var(--oro); } .glifos { font-family: 'Noto Sans Cuneiform', serif; } main { padding: 32px; }

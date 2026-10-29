@@ -3,3 +3,5 @@ docs/transcripts/
 .omc/
 .superpowers/
 .omx/
+node_modules/
+crates/nisaba-gui/ui/dist/
