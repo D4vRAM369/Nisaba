@@ -1,0 +1,2 @@
+{"type":"user","uuid":"s1","parentUuid":null,"sessionId":"a1b2c3d4-0000-4000-8000-000000000001","cwd":"/home/u/Proyectos/Demo","timestamp":"2026-10-28T23:10:02.000Z","message":{"role":"user","content":"Revisa el módulo PillMate."}}
+{"type":"assistant","uuid":"s2","parentUuid":"s1","sessionId":"a1b2c3d4-0000-4000-8000-000000000001","cwd":"/home/u/Proyectos/Demo","timestamp":"2026-10-28T23:10:03.000Z","message":{"model":"claude-haiku-4","content":[{"type":"text","text":"PillMate se ve bien."}]}}

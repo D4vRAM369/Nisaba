@@ -1,14 +1,19 @@
+pub mod adaptadores;
 pub mod db;
 pub mod modelo;
 
 use std::path::PathBuf;
 
 fn home() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default()
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_default()
 }
 
 fn entorno(nombre: &str) -> Option<PathBuf> {
-    std::env::var_os(nombre).filter(|v| !v.is_empty()).map(PathBuf::from)
+    std::env::var_os(nombre)
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
 }
 
 /// Carpeta de la bóveda: `NISABA_HOME`, o `$XDG_DATA_HOME/nisaba`, o `~/.local/share/nisaba`.

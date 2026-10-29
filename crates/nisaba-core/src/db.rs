@@ -49,13 +49,22 @@ mod tests {
     use rusqlite::Connection;
 
     fn sembrar(con: &Connection) {
-        con.execute("INSERT INTO conversaciones(id, fuente, id_original) VALUES (1, 'claude-code', 'abc')", []).unwrap();
+        con.execute(
+            "INSERT INTO conversaciones(id, fuente, id_original) VALUES (1, 'claude-code', 'abc')",
+            [],
+        )
+        .unwrap();
         con.execute("INSERT INTO mensajes(id, conversacion_id, orden, rol, oculto) VALUES (1, 1, 0, 'usuario', 0)", []).unwrap();
         con.execute("INSERT INTO partes(id, mensaje_id, orden, tipo, contenido) VALUES (1, 1, 0, 'texto', 'La Medicación de PillMate')", []).unwrap();
     }
 
     fn coincidencias(con: &Connection, q: &str) -> i64 {
-        con.query_row("SELECT count(*) FROM partes_fts WHERE partes_fts MATCH ?1", [q], |f| f.get(0)).unwrap()
+        con.query_row(
+            "SELECT count(*) FROM partes_fts WHERE partes_fts MATCH ?1",
+            [q],
+            |f| f.get(0),
+        )
+        .unwrap()
     }
 
     #[test]
