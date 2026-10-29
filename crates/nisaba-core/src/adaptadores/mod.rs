@@ -24,3 +24,17 @@ pub(crate) fn avisar(avisos: &mut Vec<String>, texto: String) {
         avisos.push(texto);
     }
 }
+
+/// Recorre las primeras líneas JSON hasta que `extraer` da un `cwd` no vacío.
+// ponytail: tope de 200 líneas; una cabecera más larga cuenta como "sin cwd".
+pub(crate) fn primer_cwd(
+    lector: impl std::io::BufRead,
+    extraer: impl Fn(&serde_json::Value) -> Option<String>,
+) -> Option<String> {
+    lector
+        .lines()
+        .take(200)
+        .map_while(Result::ok)
+        .filter_map(|l| serde_json::from_str(&l).ok())
+        .find_map(|v| extraer(&v).filter(|s| !s.is_empty()))
+}

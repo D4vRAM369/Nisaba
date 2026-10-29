@@ -11,6 +11,8 @@ pub struct FilaSalud {
     pub parseados: i64,
     pub errores: Vec<(String, String)>,
     pub avisos: i64,
+    /// Archivos que el usuario excluyó: no son errores.
+    pub excluidos: i64,
 }
 
 /// Una fila por fuente (siempre las dos, aunque no tengan archivos).
@@ -18,11 +20,12 @@ pub fn informe(conn: &Connection) -> rusqlite::Result<Vec<FilaSalud>> {
     let mut filas = Vec::new();
     for fuente in [Fuente::ClaudeCode, Fuente::Codex] {
         let f = fuente.as_str();
-        let (vistos, parseados, avisos): (i64, i64, i64) = conn.query_row(
-            "SELECT COUNT(*), COALESCE(SUM(estado='ok'),0), COALESCE(SUM(avisos),0)
+        let (vistos, parseados, avisos, excluidos): (i64, i64, i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(estado='ok'),0), COALESCE(SUM(avisos),0),
+                    COALESCE(SUM(estado='excluida'),0)
              FROM archivos WHERE fuente = ?1",
             [f],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
         let mut st = conn.prepare(
             "SELECT ruta, COALESCE(error,'') FROM archivos
@@ -45,6 +48,7 @@ pub fn informe(conn: &Connection) -> rusqlite::Result<Vec<FilaSalud>> {
             parseados,
             errores,
             avisos,
+            excluidos,
         });
     }
     Ok(filas)

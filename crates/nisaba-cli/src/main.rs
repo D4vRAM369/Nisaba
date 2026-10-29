@@ -3,7 +3,7 @@ mod mcp;
 
 use clap::{Parser, Subcommand};
 use formato::texto_busqueda;
-use nisaba_core::busqueda::{buscar, resolver, Filtros, Resolucion};
+use nisaba_core::busqueda::{buscar, resolver, Filtros, Resolucion, EXCLUIDA};
 use nisaba_core::db;
 use nisaba_core::indexador::{indexar, Progreso, ResultadoIndexado, Rutas};
 use nisaba_core::lector::{a_markdown, leer, Tramo};
@@ -157,6 +157,10 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                     eprintln!("Id ambiguo: {id} encaja con {}", ids.join(", "));
                     return Ok(1);
                 }
+                Resolucion::Excluida => {
+                    eprintln!("{EXCLUIDA}");
+                    return Ok(1);
+                }
             };
             let t = Tramo {
                 desde,
@@ -175,6 +179,7 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 Resolucion::Ambiguo(ids) => {
                     return Err(format!("Id ambiguo: {id} encaja con {}", ids.join(", ")))
                 }
+                Resolucion::Excluida => return Err(EXCLUIDA.to_string()),
                 Resolucion::Uno(_) => {}
             }
             let nombre = format!("nisaba-gui{}", std::env::consts::EXE_SUFFIX);

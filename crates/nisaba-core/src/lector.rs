@@ -232,7 +232,7 @@ fn cargar_mensajes(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<
 
 fn cargar_hijos(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<Vec<Hijo>> {
     let mut stmt = conn.prepare(
-        "SELECT fuente, id_original, COALESCE(descripcion, '') FROM conversaciones
+        "SELECT fuente, id_original, COALESCE(descripcion, '') FROM conversaciones_visibles
          WHERE padre_id = ?1 ORDER BY inicio, id",
     )?;
     let filas = stmt.query_map([conversacion_id], |r| {
@@ -268,7 +268,7 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
         bool,
     ) = conn.query_row(
         "SELECT fuente, id_original, titulo, hoja, cwd, padre_id IS NOT NULL
-         FROM conversaciones WHERE id = ?1",
+         FROM conversaciones_visibles WHERE id = ?1",
         [conversacion_id],
         |r| {
             Ok((

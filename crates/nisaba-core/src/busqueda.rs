@@ -223,8 +223,8 @@ pub fn buscar_sin_contar(
          FROM partes_fts
          JOIN partes p ON p.id = partes_fts.rowid
          JOIN mensajes m ON m.id = p.mensaje_id
-         JOIN conversaciones c ON c.id = m.conversacion_id
-         JOIN conversaciones g ON g.id = COALESCE(c.padre_id, c.id)
+         JOIN conversaciones_visibles c ON c.id = m.conversacion_id
+         JOIN conversaciones_visibles g ON g.id = COALESCE(c.padre_id, c.id)
          WHERE partes_fts MATCH ?1 AND m.oculto = 0 AND p.tipo IN ({})
            AND (?2 IS NULL OR g.fuente = ?2)
            AND (?3 IS NULL OR g.proyecto = ?3)
@@ -335,6 +335,9 @@ pub fn id_publico(fuente: Fuente, id_original: &str) -> String {
     format!("{}-{corto}", fuente.prefijo())
 }
 
+/// Lo que ve quien pide una conversación que excluyó sin borrarla.
+pub const EXCLUIDA: &str = "Conversación excluida por el usuario";
+
 /// Resultado de resolver un id público.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Resolucion {
@@ -342,6 +345,8 @@ pub enum Resolucion {
     Ninguno,
     /// Más de una conversación encaja; trae sus ids públicos completos.
     Ambiguo(Vec<String>),
+    /// Existe, pero el usuario excluyó su carpeta y la conservó oculta.
+    Excluida,
 }
 
 /// `cc-a1b2c3d4` → conversación. Cada fila se compara por el extremo que usa
@@ -361,19 +366,26 @@ pub fn resolver(conn: &Connection, id_publico_txt: &str) -> rusqlite::Result<Res
     }
     // substr en vez de LIKE: los ids pueden llevar `_` o `%`.
     let mut stmt = conn.prepare(
-        "SELECT id, id_original FROM conversaciones
+        "SELECT id, id_original, id IN (SELECT id FROM conversaciones_visibles)
+         FROM conversaciones
          WHERE fuente = ?1
            AND CASE WHEN fuente = 'codex' OR substr(id_original, 1, 6) = 'agent-'
                     THEN substr(id_original, -?3) ELSE substr(id_original, 1, ?3) END = ?2
          ORDER BY id LIMIT 5",
     )?;
-    let filas: Vec<(i64, String)> = stmt
+    let todas: Vec<(i64, String, bool)> = stmt
         .query_map(
             params![fuente.as_str(), resto, resto.chars().count() as i64],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?
         .collect::<Result<_, _>>()?;
+    let filas: Vec<(i64, String)> = todas
+        .iter()
+        .filter(|(_, _, visible)| *visible)
+        .map(|(id, o, _)| (*id, o.clone()))
+        .collect();
     Ok(match filas.len() {
+        0 if !todas.is_empty() => Resolucion::Excluida,
         0 => Resolucion::Ninguno,
         1 => Resolucion::Uno(filas[0].0),
         _ => Resolucion::Ambiguo(
@@ -409,7 +421,7 @@ pub fn recientes_desde(
         AND (?3 IS NULL OR c.fin>=?3)";
     let fuente = f.fuente.map(|f| f.as_str());
     let total_sesiones = conn.query_row(
-        &format!("SELECT COUNT(*) FROM conversaciones c WHERE {CONDICION}"),
+        &format!("SELECT COUNT(*) FROM conversaciones_visibles c WHERE {CONDICION}"),
         params![fuente, f.proyecto, f.desde],
         |r| r.get(0),
     )?;
@@ -418,7 +430,7 @@ pub fn recientes_desde(
          COALESCE((SELECT substr(p.contenido,1,180) FROM mensajes m JOIN partes p ON p.mensaje_id=m.id
            WHERE m.conversacion_id=c.id AND m.oculto=0 AND p.tipo='texto'
            ORDER BY m.orden,p.orden LIMIT 1),''), c.cwd
-         FROM conversaciones c WHERE {CONDICION} ORDER BY c.fin DESC,c.id DESC LIMIT ?4 OFFSET ?5"
+         FROM conversaciones_visibles c WHERE {CONDICION} ORDER BY c.fin DESC,c.id DESC LIMIT ?4 OFFSET ?5"
     ))?;
     let resultados = st
         .query_map(

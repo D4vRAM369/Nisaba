@@ -101,6 +101,22 @@ fn leer_bytes(ruta: &Path) -> Result<Vec<u8>, String> {
     Ok(salida)
 }
 
+/// `cwd` de `session_meta`, leyendo (y descomprimiendo) solo hasta encontrarlo.
+pub fn cwd_cabecera(ruta: &Path) -> Option<String> {
+    let f = std::fs::File::open(ruta).ok()?;
+    let de_meta = |v: &Value| {
+        (v.get("type").and_then(Value::as_str) == Some("session_meta"))
+            .then(|| v.get("payload").and_then(|p| texto(p, "cwd")))
+            .flatten()
+    };
+    if ruta.extension().is_some_and(|x| x == "zst") {
+        let dec = ruzstd::decoding::StreamingDecoder::new(f).ok()?;
+        crate::adaptadores::primer_cwd(std::io::BufReader::new(dec), de_meta)
+    } else {
+        crate::adaptadores::primer_cwd(std::io::BufReader::new(f), de_meta)
+    }
+}
+
 pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
     let bytes = leer_bytes(ruta)?;
     let contenido = String::from_utf8_lossy(&bytes);

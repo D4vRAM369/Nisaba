@@ -66,6 +66,7 @@ pub fn leer_en(rutas: &Rutas, id: &str, tramo: Tramo) -> Result<Lectura, String>
         busqueda::Resolucion::Ambiguo(ids) => {
             return Err(format!("Id ambiguo: {id} encaja con {}", ids.join(", ")))
         }
+        busqueda::Resolucion::Excluida => return Err(busqueda::EXCLUIDA.to_string()),
     };
     let tramo = Tramo {
         cantidad: tramo.cantidad.clamp(1, 100),
@@ -83,7 +84,7 @@ pub fn salud_en(rutas: &Rutas) -> Result<Vec<FilaSalud>, String> {
 pub fn proyectos_en(rutas: &Rutas) -> Result<Vec<String>, String> {
     let conn =
         nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
-    let mut st = conn.prepare("SELECT DISTINCT proyecto FROM conversaciones WHERE proyecto IS NOT NULL AND proyecto <> '' ORDER BY proyecto COLLATE NOCASE").map_err(|e| e.to_string())?;
+    let mut st = conn.prepare("SELECT DISTINCT proyecto FROM conversaciones_visibles WHERE proyecto IS NOT NULL AND proyecto <> '' ORDER BY proyecto COLLATE NOCASE").map_err(|e| e.to_string())?;
     let filas = st.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?;
     filas
         .collect::<rusqlite::Result<Vec<_>>>()

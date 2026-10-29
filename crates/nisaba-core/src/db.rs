@@ -59,6 +59,23 @@ fn migrar(con: &Connection) -> rusqlite::Result<()> {
              COMMIT;",
         )?;
     }
+    if version < 2 {
+        // v2: carpetas excluidas. `conversaciones.excluida` la mantiene `exclusiones`;
+        // la vista es el único filtro que usan búsqueda, recientes y lector.
+        con.execute_batch(
+            "BEGIN;
+             CREATE TABLE exclusiones(ruta TEXT PRIMARY KEY, desde TEXT NOT NULL);
+             ALTER TABLE archivos ADD COLUMN cwd TEXT;
+             ALTER TABLE conversaciones ADD COLUMN excluida INTEGER NOT NULL DEFAULT 0;
+             UPDATE archivos SET cwd = (SELECT c.cwd FROM conversaciones c WHERE c.ruta = archivos.ruta);
+             CREATE VIEW conversaciones_visibles AS
+               SELECT c.* FROM conversaciones c
+               WHERE c.excluida = 0 AND NOT EXISTS
+                 (SELECT 1 FROM conversaciones p WHERE p.id = c.padre_id AND p.excluida = 1);
+             PRAGMA user_version = 2;
+             COMMIT;",
+        )?;
+    }
     Ok(())
 }
 

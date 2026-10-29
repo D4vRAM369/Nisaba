@@ -554,7 +554,13 @@ fn subagente_se_enlaza_si_padre_llega_en_otra_pasada() {
 /// Deja la tablilla como la dejaba la v0.1.0: sin `cwd` y con `user_version = 0`.
 fn volver_a_v0(e: &mut Entorno) {
     e.conn
-        .execute_batch("ALTER TABLE conversaciones DROP COLUMN cwd; PRAGMA user_version = 0;")
+        .execute_batch(
+            "DROP VIEW conversaciones_visibles; DROP TABLE exclusiones;
+             ALTER TABLE conversaciones DROP COLUMN excluida;
+             ALTER TABLE conversaciones DROP COLUMN cwd;
+             ALTER TABLE archivos DROP COLUMN cwd;
+             PRAGMA user_version = 0;",
+        )
         .unwrap();
     e.conn = db::abrir(&e.rutas.home.join("tablilla.db")).unwrap();
 }

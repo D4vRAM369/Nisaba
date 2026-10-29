@@ -145,6 +145,20 @@ fn texto(v: &Value, clave: &str) -> Option<String> {
     v.get(clave).and_then(Value::as_str).map(str::to_string)
 }
 
+/// Primer `cwd` de la sesión, leyendo solo hasta encontrarlo. En un subagente
+/// (`<sesion>/subagents/…`) vale el de su sesión madre (`<sesion>.jsonl`), si existe.
+pub fn cwd_cabecera(ruta: &Path) -> Option<String> {
+    let madre = ruta
+        .parent()
+        .filter(|d| d.file_name().is_some_and(|n| n == "subagents"))
+        .and_then(Path::parent)
+        .map(|sesion| sesion.with_extension("jsonl"))
+        .filter(|m| m.is_file());
+    let origen = madre.as_deref().unwrap_or(ruta);
+    let f = std::fs::File::open(origen).ok()?;
+    crate::adaptadores::primer_cwd(std::io::BufReader::new(f), |v| texto(v, "cwd"))
+}
+
 pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
     let bytes = std::fs::read(ruta).map_err(|e| format!("{}: {e}", ruta.display()))?;
     let contenido = String::from_utf8_lossy(&bytes);

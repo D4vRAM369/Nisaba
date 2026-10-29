@@ -1,10 +1,11 @@
 use crate::adaptadores::{claude_code, codex};
+use crate::exclusiones;
 use crate::modelo::{ConversacionParseada, Fuente};
 use crate::titulo::titulo_util;
 use crate::{dir_claude, dir_codex, nisaba_home};
 use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, UNIX_EPOCH};
@@ -264,7 +265,11 @@ fn marca_utc(segs: u64) -> String {
     )
 }
 
-fn destino_copia(rutas: &Rutas, fuente: Fuente, origen: &Path) -> Result<PathBuf, String> {
+pub(crate) fn destino_copia(
+    rutas: &Rutas,
+    fuente: Fuente,
+    origen: &Path,
+) -> Result<PathBuf, String> {
     let (raiz, carpeta) = match fuente {
         Fuente::ClaudeCode => (&rutas.claude, "claude-code"),
         Fuente::Codex => (&rutas.codex, "codex"),
@@ -382,27 +387,53 @@ pub fn indexar(
     let mut pendientes: Vec<(i64, Fuente, String)> = Vec::new();
     let mut ultimo = Instant::now();
     let mut vistos_tamano: HashMap<String, (i64, i64)> = HashMap::new();
-    if let Ok(mut st) = conn.prepare("SELECT ruta, tamano, mtime FROM archivos") {
-        if let Ok(filas) = st.query_map([], |f| Ok((f.get::<_, String>(0)?, f.get(1)?, f.get(2)?)))
-        {
-            for (r, t, m) in filas.flatten() {
+    let mut ya_excluidos: HashSet<String> = HashSet::new();
+    if let Ok(mut st) = conn.prepare("SELECT ruta, tamano, mtime, estado FROM archivos") {
+        if let Ok(filas) = st.query_map([], |f| {
+            Ok((
+                f.get::<_, String>(0)?,
+                f.get(1)?,
+                f.get(2)?,
+                f.get::<_, String>(3)?,
+            ))
+        }) {
+            for (r, t, m, estado) in filas.flatten() {
+                if estado == "excluida" {
+                    ya_excluidos.insert(r.clone());
+                }
                 vistos_tamano.insert(r, (t, m));
             }
         }
     }
+    let excluidas = exclusiones::lista(conn).unwrap_or_default();
 
     for (i, c) in candidatos.iter().enumerate() {
         let clave = c.ruta.to_string_lossy().to_string();
         // Sin cambios solo si además la copia existe: así los archivos ya indexados antes de que
         // existiera la copia (p. ej. Codex) se copian en la siguiente pasada.
         let sin_cambios = vistos_tamano.get(&clave) == Some(&(c.tamano, c.mtime))
-            && destino_copia(rutas, c.fuente, &c.ruta).is_ok_and(|d| d.exists());
-        if !sin_cambios {
+            && (ya_excluidos.contains(&clave)
+                || destino_copia(rutas, c.fuente, &c.ruta).is_ok_and(|d| d.exists()));
+        // Excluida: solo se lee la cabecera; ni se parsea ni se copia.
+        let excluida = if sin_cambios || excluidas.is_empty() {
+            None
+        } else {
+            cwd_cabecera(c).filter(|cwd| exclusiones::cubierta(&excluidas, cwd))
+        };
+        if let Some(cwd) = excluida {
+            let _ = marcar(conn, c, "excluida", None, 0, true);
+            let _ = conn.execute(
+                "UPDATE archivos SET cwd = ?1 WHERE ruta = ?2",
+                params![cwd, clave],
+            );
+        } else if !sin_cambios {
             let fallo_copia = copiar_original(rutas, c.fuente, &c.ruta)
                 .err()
                 .map(|e| format!("copia: {e}"));
             let firma = fallo_copia.is_none();
-            match parsear(c) {
+            let parseado = parsear(c);
+            let cwd_leido = parseado.as_ref().ok().and_then(|p| p.cwd.clone());
+            match parseado {
                 Err(e) => {
                     errores += 1;
                     let msg = match &fallo_copia {
@@ -455,6 +486,12 @@ pub fn indexar(
                         );
                     }
                 },
+            }
+            if cwd_leido.is_some() {
+                let _ = conn.execute(
+                    "UPDATE archivos SET cwd = ?1 WHERE ruta = ?2",
+                    params![cwd_leido, clave],
+                );
             }
         }
         if ultimo.elapsed() >= Duration::from_millis(500) {
@@ -538,6 +575,13 @@ fn rellenar_cwd_desde_copias(conn: &Connection, rutas: &Rutas) {
             "UPDATE conversaciones SET cwd = ?1, huella = '' WHERE id = ?2",
             params![cwd, id],
         );
+    }
+}
+
+fn cwd_cabecera(c: &Candidato) -> Option<String> {
+    match c.fuente {
+        Fuente::ClaudeCode => claude_code::cwd_cabecera(&c.ruta),
+        Fuente::Codex => codex::cwd_cabecera(&c.ruta),
     }
 }
 

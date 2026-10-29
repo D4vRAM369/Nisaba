@@ -226,6 +226,7 @@ fn leer_tool(conn: &Connection, id: &str, args: &Value) -> Result<String, String
         Resolucion::Ambiguo(ids) => {
             return Err(format!("Id ambiguo: {id} encaja con {}", ids.join(", ")))
         }
+        Resolucion::Excluida => return Err(nisaba_core::busqueda::EXCLUIDA.to_string()),
     };
     let mut t = Tramo {
         desde: entero(args, "desde").map(|n| n.max(0) as usize),
