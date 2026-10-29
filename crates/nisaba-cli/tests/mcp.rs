@@ -123,3 +123,23 @@ fn stdout_solo_json() {
         assert_eq!(parse(x)["jsonrpc"], "2.0", "{x}");
     }
 }
+
+#[test]
+fn bytes_no_utf8_no_matan_el_servidor() {
+    let c = ctx();
+    let mut hijo = c.comando(&["mcp"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    {
+        let mut si = hijo.stdin.take().unwrap();
+        si.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\xff\xfe\"}\n").unwrap();
+        si.write_all(b"\xc3\x28\xff\n").unwrap();
+        writeln!(si, "{}", req(2, "tools/list", json!({}))).unwrap();
+    }
+    let o = hijo.wait_with_output().unwrap();
+    assert_eq!(o.status.code(), Some(0));
+    let l: Vec<Value> = String::from_utf8(o.stdout).unwrap().lines().map(parse).collect();
+    assert_eq!(l.len(), 3);
+    assert_eq!(l[0]["error"]["code"], -32601);
+    assert_eq!(l[1]["error"]["code"], -32700);
+    assert_eq!(l[2]["id"], 2);
+    assert!(l[2]["result"]["tools"].is_array());
+}

@@ -17,18 +17,37 @@ pub fn servir(rutas: &Rutas) -> std::io::Result<()> {
     let mut conn = db::abrir(&rutas.home.join("tablilla.db"))
         .map_err(|e| std::io::Error::other(format!("no puedo abrir la tablilla: {e}")))?;
     let stdin = std::io::stdin();
+    let mut stdin = stdin.lock();
     let mut stdout = std::io::stdout().lock();
-    for linea in stdin.lock().lines() {
-        let linea = linea?;
+    let mut buf = Vec::new();
+    loop {
+        buf.clear();
+        if stdin.read_until(b'\n', &mut buf)? == 0 {
+            return Ok(());
+        }
+        // Bytes no UTF-8 no matan el servidor: pasan a ser U+FFFD y el parser JSON decide.
+        let linea = String::from_utf8_lossy(&buf).into_owned();
         if linea.trim().is_empty() {
             continue;
         }
-        if let Some(resp) = procesar(&linea, &mut conn, rutas) {
+        if let Some(resp) = contener(&linea, || procesar(&linea, &mut conn, rutas)) {
             writeln!(stdout, "{resp}")?;
             stdout.flush()?;
         }
     }
-    Ok(())
+}
+
+/// Ejecuta el manejo de una petición sin dejar que un pánico mate el servidor.
+/// El mensaje del pánico lo escribe el hook por defecto en stderr, nunca en stdout.
+fn contener(linea: &str, f: impl FnOnce() -> Option<Value>) -> Option<Value> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+        Ok(r) => r,
+        Err(_) => {
+            eprintln!("Error interno al procesar una petición");
+            let id = serde_json::from_str::<Value>(linea).ok()?.get("id")?.clone();
+            Some(error(id, -32603, "error interno"))
+        }
+    }
 }
 
 fn error(id: Value, codigo: i64, mensaje: &str) -> Value {
@@ -189,4 +208,21 @@ fn leer_tool(conn: &Connection, id: &str, args: &Value) -> Result<String, String
     t.todo = args.get("todo").and_then(Value::as_bool).unwrap_or(false);
     let l = leer(conn, cid, &t).map_err(|e| e.to_string())?;
     Ok(a_markdown(&l))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn panico_con_id_responde_32603() {
+        let r = contener(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call"}"#, || panic!("boom")).unwrap();
+        assert_eq!(r["error"]["code"], -32603);
+        assert_eq!(r["id"], 4);
+    }
+
+    #[test]
+    fn panico_en_notificacion_no_responde() {
+        assert!(contener(r#"{"jsonrpc":"2.0","method":"x"}"#, || panic!("boom")).is_none());
+    }
 }
