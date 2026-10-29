@@ -9,7 +9,7 @@ Find what you discussed with Claude Code or Codex by word or phrase, and reread 
 
 > ⚠️ **Prerelease.** It works and is used daily, but it is not stable yet: commands and formats may change.
 
-![Nisaba: search on the left, "conversation only" reader on the right](docs/identidad/captura-lector.png)
+![Nisaba: search on the left, "conversation only" reader on the right](assets/captura-lector.png)
 
 </div>
 

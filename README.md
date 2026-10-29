@@ -9,7 +9,7 @@ Encuentra por palabra o frase lo que hablaste con Claude Code o Codex, y reléel
 
 > ⚠️ **Prerelease.** Funciona y se usa a diario, pero aún no es estable: pueden cambiar comandos y formatos.
 
-![Nisaba: buscador a la izquierda y lector «solo conversación» a la derecha](docs/identidad/captura-lector.png)
+![Nisaba: buscador a la izquierda y lector «solo conversación» a la derecha](assets/captura-lector.png)
 
 </div>
 

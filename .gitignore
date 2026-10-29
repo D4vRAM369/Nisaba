@@ -9,3 +9,7 @@ crates/nisaba-gui/gen/
 crates/nisaba-gui/binaries/
 flatpak/nisaba-deb/
 flatpak/.flatpak-builder/
+
+# Documentación interna: solo local, nunca en Git
+docs/
+HANDOFF.md
