@@ -243,7 +243,7 @@ pub fn buscar(conn: &Connection, entrada: &str, f: &Filtros, canal: &str) -> rus
         )?;
         let Some(fuente) = Fuente::desde_str(&g.fuente) else { continue };
         resultados.push(Resultado {
-            id_publico: format!("{}-{}", fuente.prefijo(), g.id_original.chars().take(8).collect::<String>()),
+            id_publico: id_publico(fuente, &g.id_original),
             titulo: g.titulo.unwrap_or_default(),
             fuente,
             proyecto: g.proyecto,
@@ -262,6 +262,11 @@ pub fn buscar(conn: &Connection, entrada: &str, f: &Filtros, canal: &str) -> rus
         None
     };
     Ok(Respuesta { resultados, total_sesiones, sugerencia })
+}
+
+/// Id corto que ve la persona: `{prefijo}-{primeros 8 caracteres del id original}`.
+pub fn id_publico(fuente: Fuente, id_original: &str) -> String {
+    format!("{}-{}", fuente.prefijo(), id_original.chars().take(8).collect::<String>())
 }
 
 /// `cc-a1b2c3d4` → id interno de la conversación (prefiere la sesión madre a un subagente).

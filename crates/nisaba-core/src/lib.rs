@@ -2,6 +2,7 @@ pub mod adaptadores;
 pub mod busqueda;
 pub mod db;
 pub mod indexador;
+pub mod lector;
 pub mod modelo;
 pub mod titulo;
 
