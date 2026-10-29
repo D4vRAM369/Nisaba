@@ -269,8 +269,13 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             quitar,
             lista,
         } => {
-            // Ruta absoluta sin resolver enlaces: la carpeta puede no existir ya.
+            // Solo se completan las rutas relativas (`.`, `foo`), sin resolver enlaces: la
+            // carpeta puede no existir ya. Una ruta con raíz se guarda tal cual; en Windows,
+            // `absolute` le añadiría la unidad y dejaría de casar con el `cwd` guardado.
             let absoluta = |c: &str| {
+                if std::path::Path::new(c).has_root() {
+                    return Ok(c.to_string());
+                }
                 std::path::absolute(c)
                     .map(|p| p.to_string_lossy().into_owned())
                     .map_err(|x| format!("{c}: {x}"))
