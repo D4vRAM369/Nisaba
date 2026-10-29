@@ -17,23 +17,38 @@ pub struct FiltrosGui {
     limite: Option<usize>,
 }
 
-pub fn buscar_en(rutas: &Rutas, consulta: &str, f: FiltrosGui) -> Result<Respuesta, String> {
+fn filtros_core(f: FiltrosGui) -> Result<Filtros, String> {
     let fuente = f
         .fuente
         .as_deref()
         .map(|s| nisaba_core::modelo::Fuente::desde_str(s).ok_or("Fuente desconocida"))
         .transpose()?;
-    let filtros = Filtros {
+    Ok(Filtros {
         fuente,
         proyecto: f.proyecto,
         desde: f.desde,
         razonamiento: f.razonamiento,
         codigo: f.codigo,
         limite: f.limite.unwrap_or(30).clamp(1, 100),
-    };
+    })
+}
+
+pub fn buscar_en(rutas: &Rutas, consulta: &str, f: FiltrosGui) -> Result<Respuesta, String> {
+    let filtros = filtros_core(f)?;
     let conn =
         nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
     busqueda::buscar(&conn, consulta, &filtros, "gui").map_err(|e| e.to_string())
+}
+
+pub fn recientes_en(
+    rutas: &Rutas,
+    f: FiltrosGui,
+    desplazamiento: usize,
+) -> Result<Respuesta, String> {
+    let filtros = filtros_core(f)?;
+    let conn =
+        nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
+    busqueda::recientes_desde(&conn, &filtros, desplazamiento).map_err(|e| e.to_string())
 }
 
 pub fn leer_en(rutas: &Rutas, id: &str, tramo: Tramo) -> Result<Lectura, String> {
@@ -96,6 +111,22 @@ pub async fn aviso_limpieza() -> Result<Option<String>, String> {
 pub async fn buscar(consulta: String, filtros: FiltrosGui) -> Result<Respuesta, String> {
     tauri::async_runtime::spawn_blocking(move || {
         buscar_en(&Rutas::desde_entorno(), &consulta, filtros)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn recientes(
+    filtros: FiltrosGui,
+    desplazamiento: Option<usize>,
+) -> Result<Respuesta, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        recientes_en(
+            &Rutas::desde_entorno(),
+            filtros,
+            desplazamiento.unwrap_or(0),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -192,5 +223,33 @@ mod tests {
     fn proyectos_devuelve_nombres_del_indice() {
         let (_d, rutas) = preparar();
         assert_eq!(proyectos_en(&rutas).unwrap(), vec!["Demo"]);
+    }
+    #[test]
+    fn recientes_muestra_sesiones_sin_contar_una_busqueda() {
+        let (_d, rutas) = preparar();
+        let r = recientes_en(&rutas, FiltrosGui::default(), 0).unwrap();
+        assert_eq!(r.resultados.len(), 1);
+        let conn = db::abrir(&rutas.home.join("tablilla.db")).unwrap();
+        let n: i64 = conn
+            .query_row("SELECT count(*) FROM uso", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[test]
+    fn recientes_y_buscar_rechazan_la_misma_fuente_desconocida() {
+        let (_d, rutas) = preparar();
+        let f = || FiltrosGui {
+            fuente: Some("desconocida".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            recientes_en(&rutas, f(), 0).unwrap_err(),
+            "Fuente desconocida"
+        );
+        assert_eq!(
+            buscar_en(&rutas, "subtitulos", f()).unwrap_err(),
+            "Fuente desconocida"
+        );
     }
 }

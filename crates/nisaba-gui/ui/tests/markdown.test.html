@@ -1,0 +1,18 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Prueba de saneado Markdown</title></head><body><h1>Prueba de saneado Markdown</h1><ol id="resultados"></ol><div id="contenido"></div><script type="module">
+import { renderizar, sanear } from '../src/lib/markdown.ts';
+const resultados = document.querySelector('#resultados');
+function comprobar(nombre, ok) { const li = document.createElement('li'); li.textContent = `${ok ? 'PASS' : 'FAIL'} · ${nombre}`; resultados.append(li); if (!ok) document.body.dataset.fallo = 'true'; }
+const hostil = `<script>alert('x')<\/script><img src="https://example.invalid/pixel" onerror="alert(1)"><svg onload="alert(1)"></svg><iframe src="https://example.invalid"></iframe><a href="javascript:alert(1)">malo</a><button onclick="alert(1)">evento</button>`;
+const seguro = sanear(hostil);
+const muestra = document.querySelector('#contenido'); muestra.innerHTML = seguro;
+comprobar('elimina scripts, handlers, imágenes, marcos y SVG', !muestra.querySelector('script,img,iframe,svg,[onclick],[onerror],[onload]'));
+comprobar('elimina URI javascript', !muestra.querySelector('a[href]'));
+const md = renderizar('![imagen](https://example.invalid/pixel)\n\n[malo](javascript:alert%281%29)\n\n[documento](https://example.org/docs)\n\n| A | B |\n|---|---|\n| uno | dos |\n\n```rust\nlet x = "<script>";\n```');
+muestra.innerHTML = md;
+comprobar('Markdown no genera imágenes remotas', !muestra.querySelector('img,video,audio,iframe'));
+comprobar('enlaces https seguros conservados', muestra.querySelector('a')?.getAttribute('href') === 'https://example.org/docs');
+comprobar('tabla Markdown conservada', Boolean(muestra.querySelector('table td')));
+comprobar('código conserva texto y control de copia', muestra.querySelector('code')?.textContent.includes('<script>') && Boolean(muestra.querySelector('button[data-copiar]')));
+comprobar('no quedan esquemas ejecutables', ![...muestra.querySelectorAll('a')].some(a => /^javascript:/i.test(a.getAttribute('href') || '')));
+document.body.dataset.resultado = document.body.dataset.fallo ? 'FAIL' : 'PASS';
+</script></body></html>

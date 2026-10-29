@@ -1,1 +1,21 @@
-export const textos = { nombre: 'NISABA', glifos: '𒀭𒉀', tablilla: 'La tablilla', descripcion: 'Tu memoria, a salvo.' };
+export const textos = {
+  nombre: 'NISABA', glifos: '𒀭𒉀', tablilla: 'La tablilla', descripcion: 'Tu memoria, a salvo.',
+  buscar: 'Buscar en la tablilla', buscarPlaceholder: '¿Qué conversación recuerdas?', buscarAyuda: 'Una palabra, una frase entre comillas o un prefijo*.',
+  conversacion: 'Conversación', razonamiento: 'Razonamiento', codigo: 'Código y herramientas', fuente: 'Fuente', proyecto: 'Proyecto', fecha: 'Fecha', todas: 'Todas las fuentes', todos: 'Todos los proyectos', desde: 'Desde', limpiar: 'Limpiar filtros',
+  claude: 'Claude Code', codex: 'Codex', sinFecha: 'Sin fecha', sinTitulo: 'Conversación sin título',
+  resultados: 'Conversaciones', coincidencias: (n: number) => `${n} coincidencia${n === 1 ? '' : 's'}`,
+  sesiones: (n: number) => `${n} ${n === 1 ? 'sesión' : 'sesiones'}`, buscando: 'Buscando…', sinResultados: 'No encontramos esa conversación.', probarOtra: 'Prueba otra palabra o amplía los filtros.',
+  sinConversaciones: 'Todavía no hay conversaciones aquí.', sinConversacionesDetalle: 'Se mostrarán al indexar tus sesiones. Si usas filtros, prueba a ampliarlos.',
+  sesionesMostradas: (n: number, total: number) => `${n} de ${total} sesiones`,
+  listadoParcial: (n: number, total: number) => `Mostrando ${n} de ${total} conversaciones. Usa los filtros o el buscador para encontrar las demás.`,
+  lectorVacio: 'Un lugar para volver a tus ideas.', lectorVacioDetalle: 'Elige una conversación y léela aquí, sin ruido.', selecciona: 'Selecciona una conversación',
+  salud: 'Salud', volver: 'Volver a la conversación', saludTitulo: 'El estado de la tablilla', saludDetalle: 'Las dos fuentes, sin omisiones silenciosas.',
+  vistos: 'Vistos', parseados: 'Parseados', avisos: 'Avisos', ultima: 'Última conversación', sinErrores: 'Sin errores registrados.', errores: 'Archivos con error', actualizar: 'Actualizar',
+  alDia: 'Al día', indexando: (n: number, total: number) => `Indexando ${n}/${total}…`, esperando: 'Preparando la tablilla…', ocupado: 'Otro proceso está indexando. Puedes seguir buscando.', fallo: 'La indexación necesita atención.', local: 'Solo en este equipo',
+  requiereApp: 'Abre la aplicación de escritorio para consultar tu tablilla. Esta vista del navegador no tiene acceso a tus conversaciones.',
+  error: 'No se pudo completar la operación.', cargando: 'Cargando…', verTodo: 'Ver todo', soloConversacion: 'Solo conversación', anteriores: 'Cargar anteriores', siguientes: 'Cargar siguientes', bloques: (desde: number, fin: number, total: number) => `${desde}–${fin} de ${total} bloques`,
+  tu: 'Tú', asistente: 'Asistente', sistema: 'Sistema', herramienta: 'Herramienta', herramientas: (n: number, archivos: number) => `${n} herramientas · ${archivos} archivos`, verHerramientas: 'Ver el detalle de herramientas', subagente: 'Subagente', leerSubagente: 'Abrir subagente',
+  copiar: 'Copiar código', copiado: 'Copiado', errorCopiar: 'No se pudo copiar. Selecciona el código y cópialo manualmente.', textoPlano: 'texto', imagenBloqueada: 'Imagen externa omitida', contenidoLargo: 'Contenido demasiado largo para renderizar Markdown; se muestra como texto.',
+  mostrarMas: 'Mostrar más texto', cargarMasConversaciones: 'Cargar más conversaciones',
+  sinConexion: 'Sin conexión a servicios externos', coincidencia: 'Coincidencia de la búsqueda',
+};
