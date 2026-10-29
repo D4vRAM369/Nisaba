@@ -448,7 +448,20 @@ pub fn a_markdown(l: &Lectura) -> String {
         fin,
         l.total
     );
-    for b in &l.bloques {
+    s.push_str(&bloques_a_markdown(&l.bloques));
+    if fin < l.total {
+        s.push_str(&format!(
+            "… siguiente tramo: nisaba ver {} --desde {fin}\n",
+            l.id_publico
+        ));
+    }
+    s
+}
+
+/// Solo el cuerpo: un apartado por bloque, sin cabecera ni aviso de tramo.
+pub fn bloques_a_markdown(bloques: &[Bloque]) -> String {
+    let mut s = String::new();
+    for b in bloques {
         match b {
             Bloque::Usuario { hora, texto } => {
                 s.push_str(&format!(
@@ -499,12 +512,6 @@ pub fn a_markdown(l: &Lectura) -> String {
                 ));
             }
         }
-    }
-    if fin < l.total {
-        s.push_str(&format!(
-            "… siguiente tramo: nisaba ver {} --desde {fin}\n",
-            l.id_publico
-        ));
     }
     s
 }
