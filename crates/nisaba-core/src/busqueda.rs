@@ -264,9 +264,22 @@ pub fn buscar(conn: &Connection, entrada: &str, f: &Filtros, canal: &str) -> rus
     Ok(Respuesta { resultados, total_sesiones, sugerencia })
 }
 
-/// Id corto que ve la persona: `{prefijo}-{primeros 8 caracteres del id original}`.
+/// Los ids de Codex (UUIDv7) y de subagentes (`agent-…`) comparten el comienzo:
+/// para distinguirlos se usan sus últimos caracteres.
+fn por_el_final(fuente: Fuente, id_original: &str) -> bool {
+    fuente == Fuente::Codex || id_original.starts_with("agent-")
+}
+
+/// Id corto que ve la persona: `{prefijo}-{8 caracteres del id original}`
+/// (los primeros, o los últimos si el comienzo no distingue).
 pub fn id_publico(fuente: Fuente, id_original: &str) -> String {
-    format!("{}-{}", fuente.prefijo(), id_original.chars().take(8).collect::<String>())
+    let corto: String = if por_el_final(fuente, id_original) {
+        let n = id_original.chars().count();
+        id_original.chars().skip(n.saturating_sub(8)).collect()
+    } else {
+        id_original.chars().take(8).collect()
+    };
+    format!("{}-{corto}", fuente.prefijo())
 }
 
 /// `cc-a1b2c3d4` → id interno de la conversación (prefiere la sesión madre a un subagente).
@@ -281,7 +294,8 @@ pub fn resolver_id(conn: &Connection, id_publico: &str) -> rusqlite::Result<Opti
     // substr en vez de LIKE: los ids pueden llevar `_` o `%`.
     let mut stmt = conn.prepare(
         "SELECT id FROM conversaciones
-         WHERE fuente = ?1 AND substr(id_original, 1, ?3) = ?2
+         WHERE fuente = ?1
+           AND (substr(id_original, 1, ?3) = ?2 OR substr(id_original, -?3) = ?2)
          ORDER BY padre_id IS NOT NULL, id LIMIT 1",
     )?;
     let mut filas = stmt.query(params![fuente.as_str(), resto, resto.chars().count() as i64])?;

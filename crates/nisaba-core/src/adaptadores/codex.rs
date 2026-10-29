@@ -9,6 +9,9 @@ const TIPOS_IGNORADOS: &[&str] = &[
     "turn_context",
     "world_state",
     "token_usage_record",
+    // Marca de turno sin texto y copia del historial al compactar (ya está en el archivo).
+    "inter_agent_communication_metadata",
+    "compacted",
 ];
 
 const PREFIJOS_OCULTOS: &[&str] = &[
@@ -44,7 +47,9 @@ fn recorrer(dir: &Path, salida: &mut Vec<PathBuf>) {
             recorrer(&ruta, salida);
         } else if tipo.is_file() {
             let nombre = ruta.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if nombre.starts_with("rollout-") && nombre.ends_with(".jsonl") {
+            if nombre.starts_with("rollout-")
+                && (nombre.ends_with(".jsonl") || nombre.ends_with(".jsonl.zst"))
+            {
                 salida.push(ruta);
             }
         }
@@ -72,8 +77,23 @@ fn parte(tipo: TipoParte, contenido: String) -> Vec<Parte> {
     vec![Parte { tipo, contenido }]
 }
 
+/// Bytes del rollout; Codex comprime los antiguos como `*.jsonl.zst`.
+fn leer_bytes(ruta: &Path) -> Result<Vec<u8>, String> {
+    let crudo = std::fs::read(ruta).map_err(|e| format!("{}: {e}", ruta.display()))?;
+    if !ruta.extension().is_some_and(|x| x == "zst") {
+        return Ok(crudo);
+    }
+    use std::io::Read;
+    let mut dec = ruzstd::decoding::StreamingDecoder::new(crudo.as_slice())
+        .map_err(|e| format!("{}: zstd: {e}", ruta.display()))?;
+    let mut salida = Vec::new();
+    dec.read_to_end(&mut salida)
+        .map_err(|e| format!("{}: zstd: {e}", ruta.display()))?;
+    Ok(salida)
+}
+
 pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
-    let bytes = std::fs::read(ruta).map_err(|e| format!("{}: {e}", ruta.display()))?;
+    let bytes = leer_bytes(ruta)?;
     let contenido = String::from_utf8_lossy(&bytes);
     let lineas: Vec<(usize, &str)> = contenido
         .lines()
@@ -172,6 +192,12 @@ pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
                         false,
                     ),
                     "additional_tools" => continue,
+                    // Mensaje entre agentes: texto real, pero no lo escribió la persona.
+                    "agent_message" => (
+                        Rol::Asistente,
+                        parte(TipoParte::Texto, texto_bloques(payload.get("content"))),
+                        true,
+                    ),
                     otro => {
                         avisar(&mut avisos, format!("tipo desconocido: {otro}"));
                         continue;
@@ -337,6 +363,42 @@ mod tests {
         assert!(c.mensajes[1].partes[0]
             .contenido
             .ends_with("\n…[recortado]"));
+    }
+
+    #[test]
+    fn ignora_metadatos_y_mapea_agent_message() {
+        let d = tempfile::tempdir().unwrap();
+        let ruta = d.path().join("rollout-x.jsonl");
+        let t = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"a\"}}\n",
+            "{\"type\":\"inter_agent_communication_metadata\",\"payload\":{\"trigger_turn\":true}}\n",
+            "{\"type\":\"compacted\",\"payload\":{\"message\":\"\",\"replacement_history\":[]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"agent_message\",\"author\":\"/root/x\",\"content\":[{\"type\":\"input_text\",\"text\":\"informe del subagente\"}]}}\n",
+        );
+        std::fs::write(&ruta, t).unwrap();
+        let c = parsear(&ruta).unwrap();
+        assert!(c.avisos.is_empty(), "{:?}", c.avisos);
+        assert_eq!(c.mensajes.len(), 1);
+        assert!(c.mensajes[0].oculto);
+        assert_eq!(c.mensajes[0].partes[0].contenido, "informe del subagente");
+    }
+
+    #[test]
+    fn lee_rollout_comprimido_con_zstd() {
+        let d = tempfile::tempdir().unwrap();
+        let plano = "{\"type\":\"session_meta\",\"payload\":{\"id\":\"zz9\",\"cwd\":\"/home/u/Z\"}}\n\
+            {\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"hola comprimido\"}]}}\n";
+        let zst = ruzstd::encoding::compress_to_vec(
+            plano.as_bytes(),
+            ruzstd::encoding::CompressionLevel::Fastest,
+        );
+        let ruta = d.path().join("sessions/2026/01/01/rollout-2026-01-01T00-00-00-zz9.jsonl.zst");
+        std::fs::create_dir_all(ruta.parent().unwrap()).unwrap();
+        std::fs::write(&ruta, zst).unwrap();
+        assert_eq!(descubrir(d.path()), vec![ruta.clone()]);
+        let c = parsear(&ruta).unwrap();
+        assert_eq!(c.id_original, "zz9");
+        assert_eq!(c.mensajes[0].partes[0].contenido, "hola comprimido");
     }
 
     #[test]

@@ -128,3 +128,32 @@ fn cuenta_uso() {
         .unwrap();
     assert_eq!(n, 2);
 }
+
+#[test]
+fn ids_publicos_distinguen_uuid7_y_subagentes() {
+    use nisaba_core::busqueda::id_publico;
+    use nisaba_core::modelo::Fuente;
+    // UUIDv7 inventados: comparten los primeros 8 caracteres.
+    let a = "01a17580-0000-7000-8000-aaaaaaaaaaa1";
+    let b = "01a17580-0000-7000-8000-bbbbbbbbbbb2";
+    assert_ne!(id_publico(Fuente::Codex, a), id_publico(Fuente::Codex, b));
+    assert_eq!(id_publico(Fuente::Codex, a), "cx-aaaaaaa1");
+    assert_eq!(id_publico(Fuente::ClaudeCode, "a1b2c3d4-0000"), "cc-a1b2c3d4");
+    assert_eq!(id_publico(Fuente::ClaudeCode, "agent-ab12cd34ef56"), "cc-cd34ef56");
+
+    let e = indexado();
+    for (f, id) in [("codex", a), ("codex", b), ("claude-code", "agent-ab12cd34ef56")] {
+        e.conn
+            .execute("INSERT INTO conversaciones(fuente, id_original) VALUES (?1, ?2)", [f, id])
+            .unwrap();
+    }
+    let orig = |publico: &str| -> String {
+        let id = resolver_id(&e.conn, publico).unwrap().unwrap();
+        e.conn
+            .query_row("SELECT id_original FROM conversaciones WHERE id=?1", [id], |f| f.get(0))
+            .unwrap()
+    };
+    assert_eq!(orig(&id_publico(Fuente::Codex, a)), a);
+    assert_eq!(orig(&id_publico(Fuente::Codex, b)), b);
+    assert_eq!(orig("cc-cd34ef56"), "agent-ab12cd34ef56");
+}

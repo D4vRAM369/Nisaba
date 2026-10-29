@@ -18,6 +18,15 @@ const TIPOS_IGNORADOS: &[&str] = &[
     "file-history-delta",
     "cost-state",
     "summary",
+    // Metadatos de sesión sin texto de conversación (vistos en datos reales).
+    "permission-mode",
+    "ai-title",
+    "relocated",
+    "pr-link",
+    "bridge-session",
+    "tools-used",
+    "continued-in",
+    "fork-context-ref",
 ];
 
 const PREFIJOS_OCULTOS: &[&str] = &[
@@ -170,7 +179,6 @@ pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
         None
     };
 
-    let mut session_id: Option<String> = None;
     let mut cwd: Option<String> = None;
     let mut hoja: Option<String> = None;
     let mut mensajes = Vec::new();
@@ -185,9 +193,6 @@ pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
             Err(_) if pos == lineas.len() - 1 => continue,
             Err(e) => return Err(format!("línea {}: {e}", num + 1)),
         };
-        if session_id.is_none() {
-            session_id = texto(&v, "sessionId").filter(|s| !s.is_empty());
-        }
         if cwd.is_none() {
             cwd = texto(&v, "cwd").filter(|s| !s.is_empty());
         }
@@ -271,11 +276,9 @@ pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
     }
     let hoja = hoja.map(|h| resolver(Some(h.clone())).unwrap_or(h));
 
-    let id_original = if es_subagente {
-        stem
-    } else {
-        session_id.unwrap_or(stem)
-    };
+    // El nombre de archivo es único; el `sessionId` de dentro no: una sesión
+    // retomada (`--resume`) arrastra el de la original y dos archivos chocarían.
+    let id_original = stem;
 
     Ok(ConversacionParseada {
         fuente: Fuente::ClaudeCode,
@@ -389,6 +392,37 @@ mod tests {
         assert_eq!(c.padre_original.as_deref(), Some(SESION));
         assert_eq!(c.descripcion.as_deref(), Some("Revisión final"));
         assert_eq!(c.mensajes.len(), 2);
+    }
+
+    #[test]
+    fn ignora_tipos_de_metadatos_conocidos() {
+        let d = tempfile::tempdir().unwrap();
+        let ruta = d.path().join("s.jsonl");
+        let t = concat!(
+            r#"{"type":"permission-mode","permissionMode":"default","sessionId":"s"}"#, "\n",
+            r#"{"type":"ai-title","aiTitle":"Titulo inventado","sessionId":"s"}"#, "\n",
+            r#"{"type":"relocated","sessionId":"s"}"#, "\n",
+            r#"{"type":"pr-link","prUrl":"x","sessionId":"s"}"#, "\n",
+            r#"{"type":"bridge-session","sessionId":"s"}"#, "\n",
+            r#"{"type":"tools-used","sessionId":"s"}"#, "\n",
+            r#"{"type":"continued-in","sessionId":"s"}"#, "\n",
+            r#"{"type":"fork-context-ref","sessionId":"s"}"#, "\n",
+        );
+        std::fs::write(&ruta, t).unwrap();
+        assert!(parsear(&ruta).unwrap().avisos.is_empty());
+    }
+
+    #[test]
+    fn id_es_el_nombre_de_archivo_aunque_el_session_id_se_repita() {
+        // Una sesión retomada arrastra el sessionId de la original.
+        let d = tempfile::tempdir().unwrap();
+        let linea = r#"{"type":"user","uuid":"u","sessionId":"original","message":{"role":"user","content":"hola"}}"#;
+        let a = d.path().join("aaaa.jsonl");
+        let b = d.path().join("bbbb.jsonl");
+        std::fs::write(&a, format!("{linea}\n")).unwrap();
+        std::fs::write(&b, format!("{linea}\n")).unwrap();
+        assert_eq!(parsear(&a).unwrap().id_original, "aaaa");
+        assert_eq!(parsear(&b).unwrap().id_original, "bbbb");
     }
 
     #[test]
