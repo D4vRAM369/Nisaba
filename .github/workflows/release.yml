@@ -8,7 +8,23 @@ permissions:
   contents: write
 
 jobs:
+  borrador:
+    # Un solo borrador para todos los jobs; si cada job lo creara, podrían salir dos.
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    outputs:
+      id: ${{ steps.crear.outputs.id }}
+    steps:
+      - id: crear
+        run: |
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --prerelease \
+            --title "Nisaba $GITHUB_REF_NAME" --notes "Prerelease. Instrucciones de instalación en el README."
+          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n1)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
   paquetes:
+    needs: borrador
     strategy:
       fail-fast: false
       matrix:
@@ -44,13 +60,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         with:
           projectPath: crates/nisaba-gui
-          tauriScript: npm --prefix ui run tauri --
-          args: --config tauri.release.conf.json
-          tagName: ${{ github.ref_name }}
-          releaseName: Nisaba ${{ github.ref_name }}
-          releaseBody: Prerelease. Instrucciones de instalación en el README.
-          releaseDraft: true
-          prerelease: true
+          tauriScript: node ui/node_modules/@tauri-apps/cli/tauri.js
+          args: --config ${{ github.workspace }}/crates/nisaba-gui/tauri.release.conf.json
+          releaseId: ${{ needs.borrador.outputs.id }}
 
       - name: Zip portable (Windows)
         if: runner.os == 'Windows'

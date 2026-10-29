@@ -82,6 +82,12 @@ fn validar_entorno(hay_home: bool, hay_personal: bool, hay_fuentes: bool) -> Res
     Ok(())
 }
 
+/// Crea la carpeta de la bóveda con un error que dice qué ruta falló (CLI y GUI).
+pub fn preparar_home(ruta: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(ruta)
+        .map_err(|e| format!("No puedo crear la carpeta de datos {}: {e}", ruta.display()))
+}
+
 /// Ajustes de Claude Code: `NISABA_CLAUDE_SETTINGS` o `~/.claude/settings.json`.
 pub fn ajustes_claude() -> PathBuf {
     entorno("NISABA_CLAUDE_SETTINGS").unwrap_or_else(|| personal().join(".claude/settings.json"))
@@ -189,6 +195,20 @@ mod tests {
         assert!(validar_entorno(true, false, false).is_err());
         assert!(validar_entorno(true, false, true).is_ok());
         assert!(validar_entorno(true, true, false).is_ok());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn preparar_home_sin_permiso_avisa_con_la_ruta() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let ruta = d.path().join("nisaba");
+        let e = preparar_home(&ruta).unwrap_err();
+        std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(e.starts_with("No puedo crear la carpeta de datos"), "{e}");
+        assert!(e.contains(&ruta.display().to_string()), "{e}");
+        assert!(preparar_home(&d.path().join("ok")).is_ok());
     }
 
     #[test]

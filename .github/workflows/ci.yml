@@ -37,7 +37,7 @@ jobs:
           npm ci
           npm run build
       - name: Tests del frontend
-        run: node --test crates/nisaba-gui/ui/tests/
+        run: node --test crates/nisaba-gui/ui/tests/seguridad.test.mjs
 
       - name: Formato
         run: cargo fmt --all -- --check

@@ -57,7 +57,10 @@ impl Indexacion {
         if self.0.iniciado.swap(true, Ordering::AcqRel) {
             return;
         }
-        if let Err(mensaje) = nisaba_core::comprobar_entorno() {
+        let rutas = Rutas::desde_entorno();
+        if let Err(mensaje) =
+            nisaba_core::comprobar_entorno().and_then(|()| nisaba_core::preparar_home(&rutas.home))
+        {
             self.emitir(
                 &app,
                 EstadoIndexacion {
@@ -70,7 +73,7 @@ impl Indexacion {
             return;
         }
         let control = self.clone();
-        std::thread::spawn(move || control.vigilar(app, Rutas::desde_entorno()));
+        std::thread::spawn(move || control.vigilar(app, rutas));
     }
 
     fn emitir(&self, app: &tauri::AppHandle, estado: EstadoIndexacion) {
