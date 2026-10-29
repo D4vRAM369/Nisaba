@@ -7,7 +7,7 @@ Find what you discussed with Claude Code or Codex by word or phrase, and reread 
 
 [Español](README.md) · [GPL-3.0](LICENSE) license · v0.1.0
 
-> ⚠️ **Prerelease.** It works and is used daily, but it is not stable yet: commands and formats may change.
+> ⚠️ **Early version (0.x).** It works and is used daily, but it is not stable yet: commands and formats may change.
 
 ![Nisaba: search on the left, "conversation only" reader on the right](assets/captura-lector.png)
 

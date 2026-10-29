@@ -21,8 +21,8 @@ jobs:
           # La API devuelve el id al crear; buscarlo después falla porque un borrador aún no tiene etiqueta asociada.
           id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
             -f tag_name="$GITHUB_REF_NAME" -f name="Nisaba $GITHUB_REF_NAME" \
-            -f body="Prerelease. Instrucciones de instalación en el README." \
-            -F draft=true -F prerelease=true --jq .id)
+            -f body="Instrucciones de instalación en el README." \
+            -F draft=true --jq .id)
           test -n "$id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
 

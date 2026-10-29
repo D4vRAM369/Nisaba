@@ -7,7 +7,7 @@ Encuentra por palabra o frase lo que hablaste con Claude Code o Codex, y reléel
 
 [English](README-EN.md) · Licencia [GPL-3.0](LICENSE) · v0.1.0
 
-> ⚠️ **Prerelease.** Funciona y se usa a diario, pero aún no es estable: pueden cambiar comandos y formatos.
+> ⚠️ **Versión temprana (0.x).** Funciona y se usa a diario, pero aún no es estable: pueden cambiar comandos y formatos.
 
 ![Nisaba: buscador a la izquierda y lector «solo conversación» a la derecha](assets/captura-lector.png)
 
