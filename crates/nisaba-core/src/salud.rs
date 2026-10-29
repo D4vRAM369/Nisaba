@@ -1,8 +1,9 @@
+use serde::Serialize;
 use crate::modelo::Fuente;
 use rusqlite::Connection;
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FilaSalud {
     pub fuente: Fuente,
     pub ultima: Option<String>,

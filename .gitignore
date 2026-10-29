@@ -5,3 +5,4 @@ docs/transcripts/
 .omx/
 node_modules/
 crates/nisaba-gui/ui/dist/
+crates/nisaba-gui/gen/

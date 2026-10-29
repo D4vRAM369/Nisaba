@@ -104,6 +104,7 @@ fn tramo_centrado() {
     let t = Tramo { alrededor_de: Some(40), cantidad: 20, ..Default::default() };
     let l = leer(&e.conn, cid, &t).unwrap();
     assert_eq!((l.desde, l.bloques.len(), l.total), (30, 20, 60));
+    assert_eq!(l.coincidencia, Some(40));
 }
 
 #[test]

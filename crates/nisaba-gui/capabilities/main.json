@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "La ventana local puede recibir el progreso de indexación y las aperturas de conversaciones.",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}

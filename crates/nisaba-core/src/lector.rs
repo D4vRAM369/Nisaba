@@ -3,10 +3,11 @@
 use crate::busqueda::id_publico;
 use crate::modelo::Fuente;
 use rusqlite::Connection;
+use serde::Serialize;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Tramo {
     pub desde: Option<usize>,
     pub cantidad: usize,
@@ -22,7 +23,8 @@ impl Default for Tramo {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(tag = "tipo")]
 pub enum Bloque {
     Usuario { hora: Option<String>, texto: String },
     Asistente { modelo: Option<String>, hora: Option<String>, texto: String },
@@ -33,13 +35,15 @@ pub enum Bloque {
     Sistema { texto: String },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct Lectura {
     pub titulo: String,
     pub id_publico: String,
     pub total: usize,
     pub desde: usize,
     pub bloques: Vec<Bloque>,
+    /// Índice absoluto del bloque que corresponde a alrededor_de, si se pidió.
+    pub coincidencia: Option<usize>,
 }
 
 struct Msg {
@@ -286,16 +290,15 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
 
     let total = c.bloques.len();
     let cantidad = t.cantidad.max(1);
-    let desde = match t.alrededor_de {
-        Some(o) => {
-            let pos = c.bloques.iter().position(|(orden, _)| *orden >= o).unwrap_or(total.saturating_sub(1));
-            pos.saturating_sub(cantidad / 2)
+    let coincidencia = t.alrededor_de.and_then(|o| {
+        if total == 0 { None } else {
+            Some(c.bloques.iter().position(|(orden, _)| *orden >= o).unwrap_or(total - 1))
         }
-        None => t.desde.unwrap_or(0),
-    }
-    .min(total);
+    });
+    let desde = coincidencia.map(|pos| pos.saturating_sub(cantidad / 2))
+        .unwrap_or_else(|| t.desde.unwrap_or(0)).min(total);
     let bloques = c.bloques.into_iter().skip(desde).take(cantidad).map(|(_, b)| b).collect();
-    Ok(Lectura { titulo: titulo.unwrap_or_default(), id_publico: publico, total, desde, bloques })
+    Ok(Lectura { titulo: titulo.unwrap_or_default(), id_publico: publico, total, desde, bloques, coincidencia })
 }
 
 fn con_hora(base: String, hora: &Option<String>) -> String {
