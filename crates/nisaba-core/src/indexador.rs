@@ -528,6 +528,10 @@ pub fn indexar(
     }
 
     rellenar_cwd_desde_copias(conn, rutas);
+    // Con la lista de ahora, no la del principio: cubre los `cwd` recién rellenados.
+    if let Ok(lista) = exclusiones::lista(conn) {
+        let _ = exclusiones::marcar_conversaciones(conn, &lista);
+    }
 
     for (id, fuente, padre) in pendientes {
         let _ = conn.execute(

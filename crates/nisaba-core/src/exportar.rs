@@ -139,9 +139,16 @@ pub fn posibles_secretos(texto: &str) -> Vec<Hallazgo> {
                 .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == ',')
                 .unwrap_or(valor.len());
             if valor[..fin].chars().count() >= 12 {
+                // Sin prefijo público: se enseña lo mínimo para reconocerla.
+                let v: Vec<char> = valor[..fin].chars().collect();
+                let n = v.len();
                 hallazgos.push(Hallazgo {
                     tipo: "Contraseña/token",
-                    muestra: enmascarar(&valor[..fin]),
+                    muestra: format!(
+                        "{}…{} ({n})",
+                        v[..2].iter().collect::<String>(),
+                        v[n - 2..].iter().collect::<String>()
+                    ),
                 });
             }
         }
@@ -268,10 +275,15 @@ pub fn comando_continuar(
     Some(match (fuente, cwd) {
         (Fuente::Codex, _) => format!("codex resume {id_original}"),
         (Fuente::ClaudeCode, None) => format!("claude --resume {id_original}"),
-        (Fuente::ClaudeCode, Some(c)) if windows => {
-            format!("Set-Location \"{c}\"; claude --resume {id_original}")
-        }
-        (Fuente::ClaudeCode, Some(c)) => format!("cd \"{c}\" && claude --resume {id_original}"),
+        // Comillas simples: ni bash ni PowerShell expanden `$`, `` ` `` ni comodines dentro.
+        (Fuente::ClaudeCode, Some(c)) if windows => format!(
+            "Set-Location -LiteralPath '{}'; claude --resume {id_original}",
+            c.replace('\'', "''")
+        ),
+        (Fuente::ClaudeCode, Some(c)) => format!(
+            "cd '{}' && claude --resume {id_original}",
+            c.replace('\'', "'\\''")
+        ),
     })
 }
 
@@ -320,6 +332,24 @@ mod tests {
         let t =
             "# usa sk-ant-api03-AbCdEfGhIjKlMnOpQra3F9\n\nusa sk-ant-api03-AbCdEfGhIjKlMnOpQra3F9";
         assert_eq!(posibles_secretos(t).len(), 1);
+    }
+
+    #[test]
+    fn contrasena_casi_oculta() {
+        let h = &posibles_secretos("token: abcdefghijklmnop")[0];
+        assert_eq!(h.muestra, "ab…op (16)");
+    }
+
+    #[test]
+    fn comando_continuar_no_expande_la_ruta() {
+        assert_eq!(
+            comando_continuar(Fuente::ClaudeCode, "x", Some("/p/$(rm -rf ~)/it's"), false).unwrap(),
+            "cd '/p/$(rm -rf ~)/it'\\''s' && claude --resume x"
+        );
+        assert_eq!(
+            comando_continuar(Fuente::ClaudeCode, "x", Some("C:\\p\\[a] $b'c"), true).unwrap(),
+            "Set-Location -LiteralPath 'C:\\p\\[a] $b''c'; claude --resume x"
+        );
     }
 
     #[test]
@@ -387,11 +417,11 @@ mod tests {
         let id = "a1b2c3d4-0000-4000-8000-000000000001";
         assert_eq!(
             comando_continuar(Fuente::ClaudeCode, id, Some("/home/u/P"), false).unwrap(),
-            format!("cd \"/home/u/P\" && claude --resume {id}")
+            format!("cd '/home/u/P' && claude --resume {id}")
         );
         assert_eq!(
             comando_continuar(Fuente::ClaudeCode, id, Some("C:\\P"), true).unwrap(),
-            format!("Set-Location \"C:\\P\"; claude --resume {id}")
+            format!("Set-Location -LiteralPath 'C:\\P'; claude --resume {id}")
         );
         assert_eq!(
             comando_continuar(Fuente::ClaudeCode, id, None, false).unwrap(),

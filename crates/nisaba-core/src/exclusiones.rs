@@ -45,12 +45,13 @@ fn error_io(e: std::io::Error) -> rusqlite::Error {
 }
 
 /// Recalcula `conversaciones.excluida` con la lista actual.
-fn marcar_conversaciones(conn: &Connection, lista: &[String]) -> rusqlite::Result<()> {
+pub(crate) fn marcar_conversaciones(conn: &Connection, lista: &[String]) -> rusqlite::Result<()> {
     let filas: Vec<(i64, Option<String>)> = conn
         .prepare("SELECT id, cwd FROM conversaciones")?
         .query_map([], |f| Ok((f.get(0)?, f.get(1)?)))?
         .collect::<rusqlite::Result<_>>()?;
-    let mut st = conn.prepare("UPDATE conversaciones SET excluida = ?1 WHERE id = ?2")?;
+    let mut st =
+        conn.prepare("UPDATE conversaciones SET excluida = ?1 WHERE id = ?2 AND excluida <> ?1")?;
     for (id, cwd) in filas {
         let excluida = cwd.is_some_and(|c| cubierta(lista, &c));
         st.execute(params![excluida as i64, id])?;
@@ -94,6 +95,21 @@ pub fn anadir(
     carpeta: &str,
     borrar: bool,
 ) -> rusqlite::Result<usize> {
+    // Una carpeta sin componentes ("", "/", ".") lo cubriría todo.
+    if normalizar(carpeta, WINDOWS).is_empty() {
+        return Err(rusqlite::Error::InvalidParameterName(format!(
+            "carpeta no válida para excluir: {carpeta:?}"
+        )));
+    }
+    // Espera a que termine cualquier indexación: si no, una pasada que empezó con la
+    // lista anterior podría volver a guardar lo que se excluye (o se borra) ahora.
+    let cerrojo = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(false)
+        .open(rutas.home.join("index.lock"))
+        .map_err(error_io)?;
+    cerrojo.lock().map_err(error_io)?;
     conn.execute(
         "INSERT OR IGNORE INTO exclusiones(ruta, desde)
          VALUES (?1, strftime('%Y-%m-%dT%H:%M:%SZ','now'))",

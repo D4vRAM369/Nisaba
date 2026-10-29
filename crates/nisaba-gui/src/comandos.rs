@@ -154,6 +154,15 @@ pub fn comprobar_carpeta(ruta: &str, flatpak: bool) -> Result<(), String> {
     }
 }
 
+/// La carpeta se resuelve aquí a partir de la conversación: la ventana no elige rutas.
+pub fn carpeta_para_abrir_en(rutas: &Rutas, id: &str, flatpak: bool) -> Result<String, String> {
+    let cwd = origen_en(rutas, id)?
+        .cwd
+        .ok_or("Esta conversación no guarda su carpeta")?;
+    comprobar_carpeta(&cwd, flatpak)?;
+    Ok(cwd)
+}
+
 pub fn exclusiones_lista_en(rutas: &Rutas) -> Result<Vec<String>, String> {
     exclusiones::lista(&conectar(rutas)?).map_err(|e| e.to_string())
 }
@@ -236,9 +245,13 @@ pub async fn origen(id_publico: String) -> Result<Origen, String> {
 }
 
 #[tauri::command]
-pub async fn abrir_carpeta(app: tauri::AppHandle, ruta: String) -> Result<(), String> {
+pub async fn abrir_carpeta(app: tauri::AppHandle, id_publico: String) -> Result<(), String> {
     en_segundo_plano(move || {
-        comprobar_carpeta(&ruta, std::env::var_os("FLATPAK_ID").is_some())?;
+        let ruta = carpeta_para_abrir_en(
+            &Rutas::desde_entorno(),
+            &id_publico,
+            std::env::var_os("FLATPAK_ID").is_some(),
+        )?;
         app.opener()
             .open_path(&ruta, None::<&str>)
             .map_err(|e| e.to_string())
@@ -479,6 +492,21 @@ mod tests {
         quitar_exclusion_en(&rutas, demo).unwrap();
         assert!(exclusiones_lista_en(&rutas).unwrap().is_empty());
         assert!(leer_en(&rutas, "cc-a1b2c3d4", Tramo::default()).is_ok());
+    }
+
+    #[test]
+    fn la_carpeta_a_abrir_sale_de_la_conversacion() {
+        let (_d, rutas) = preparar_claude();
+        // El cwd del fixture no existe en este equipo.
+        assert_eq!(
+            carpeta_para_abrir_en(&rutas, "cc-a1b2c3d4", false).unwrap_err(),
+            "Esta carpeta ya no existe: /home/u/Proyectos/Demo"
+        );
+        assert_eq!(
+            carpeta_para_abrir_en(&rutas, "cc-a1b2c3d4", true).unwrap(),
+            "/home/u/Proyectos/Demo"
+        );
+        assert!(carpeta_para_abrir_en(&rutas, "cc-ffffffff", true).is_err());
     }
 
     #[test]

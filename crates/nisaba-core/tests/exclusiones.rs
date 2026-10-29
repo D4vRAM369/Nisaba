@@ -217,3 +217,35 @@ fn salud_cuenta_excluidos() {
     assert_eq!(cc.excluidos, 2);
     assert!(cc.errores.iter().all(|(r, _)| r.ends_with("roto.jsonl")));
 }
+
+#[test]
+fn excluir_tras_migrar_sin_cwd_queda_oculta() {
+    // Estado justo después de migrar: cwd vacío y todo pendiente de releer.
+    let mut e = entorno();
+    correr(&mut e);
+    e.conn
+        .execute_batch(
+            "UPDATE conversaciones SET cwd = NULL, huella = NULL;
+             UPDATE archivos SET mtime = NULL, cwd = NULL;",
+        )
+        .unwrap();
+    anadir(&e.conn, &e.rutas, DEMO, false).unwrap();
+    correr(&mut e);
+    assert_eq!(
+        resolver(&e.conn, "cc-a1b2c3d4").unwrap(),
+        Resolucion::Excluida
+    );
+    let r = buscar(&e.conn, "PillMate", &Filtros::default(), "cli").unwrap();
+    assert_eq!(r.total_sesiones, 0);
+}
+
+#[test]
+fn excluir_rechaza_ruta_vacia_o_raiz() {
+    let mut e = entorno();
+    correr(&mut e);
+    for ruta in ["", "/", "\\", "."] {
+        assert!(anadir(&e.conn, &e.rutas, ruta, true).is_err(), "{ruta:?}");
+    }
+    assert_eq!(contar(&e, "SELECT count(*) FROM conversaciones"), 3);
+    assert!(lista(&e.conn).unwrap().is_empty());
+}
