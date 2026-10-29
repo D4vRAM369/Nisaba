@@ -188,19 +188,8 @@ pub fn nombre_archivo(
 /// La conversación completa en Markdown, con una cabecera de datos.
 /// `todo` incluye herramientas, razonamiento y eventos ocultos, como "Ver todo".
 pub fn documento(conn: &Connection, id_publico: &str, todo: bool) -> Result<String, String> {
-    use crate::busqueda::{resolver, Resolucion, EXCLUIDA};
     let e = |e: rusqlite::Error| e.to_string();
-    let cid = match resolver(conn, id_publico).map_err(e)? {
-        Resolucion::Uno(c) => c,
-        Resolucion::Ninguno => return Err(format!("No encuentro la conversación {id_publico}")),
-        Resolucion::Ambiguo(ids) => {
-            return Err(format!(
-                "Id ambiguo: {id_publico} encaja con {}",
-                ids.join(", ")
-            ))
-        }
-        Resolucion::Excluida => return Err(EXCLUIDA.to_string()),
-    };
+    let cid = crate::busqueda::resolver_unico(conn, id_publico)?;
     let tramo = crate::lector::Tramo {
         cantidad: usize::MAX,
         todo,
@@ -236,6 +225,24 @@ pub fn documento(conn: &Connection, id_publico: &str, todo: bool) -> Result<Stri
     s.push_str("\n---\n\n");
     s.push_str(&crate::lector::bloques_a_markdown(&l.bloques));
     Ok(s)
+}
+
+/// `nombre_archivo` con los datos de la conversación `id_publico`.
+pub fn nombre_propuesto(conn: &Connection, id_publico: &str, ext: &str) -> Result<String, String> {
+    let cid = crate::busqueda::resolver_unico(conn, id_publico)?;
+    let (fin, proyecto, titulo): (Option<String>, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT fin, proyecto, titulo FROM conversaciones WHERE id = ?1",
+            [cid],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .map_err(|e| e.to_string())?;
+    Ok(nombre_archivo(
+        fin.as_deref(),
+        proyecto.as_deref(),
+        titulo.as_deref().unwrap_or(""),
+        ext,
+    ))
 }
 
 /// Comando para reanudar la sesión. Claude Code agrupa las sesiones por carpeta,

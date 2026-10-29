@@ -6,7 +6,10 @@ use std::process::Stdio;
 
 /// Escribe todas las peticiones, cierra stdin y devuelve (líneas de stdout, código de salida).
 fn sesion(peticiones: &[Value]) -> (Vec<String>, Option<i32>) {
-    let c = ctx();
+    sesion_en(&ctx(), peticiones)
+}
+
+fn sesion_en(c: &comun::Ctx, peticiones: &[Value]) -> (Vec<String>, Option<i32>) {
     let mut hijo = c
         .comando(&["mcp"])
         .stdin(Stdio::piped())
@@ -183,4 +186,46 @@ fn bytes_no_utf8_no_matan_el_servidor() {
     assert_eq!(l[1]["error"]["code"], -32700);
     assert_eq!(l[2]["id"], 2);
     assert!(l[2]["result"]["tools"].is_array());
+}
+
+fn texto(l: &str) -> String {
+    parse(l)["result"]["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[test]
+fn mcp_buscar_incluye_cwd() {
+    let (l, _) = sesion(&[
+        llamada(1, "buscar_conversaciones", json!({"consulta":"subtitulos"})),
+        llamada(2, "leer_conversacion", json!({"id":"cx-cx01"})),
+    ]);
+    for x in &l {
+        let t = texto(x);
+        assert!(t.contains("/home/u/Proyectos/Mirlo"), "{t}");
+        assert!(t.contains("cx01"), "{t}");
+    }
+    assert!(
+        texto(&l[0]).contains("id_original: cx01"),
+        "{}",
+        texto(&l[0])
+    );
+}
+
+#[test]
+fn mcp_leer_excluida() {
+    let c = ctx();
+    c.nisaba(&["indexar"]);
+    let o = c.nisaba(&["excluir", "/home/u/Proyectos/Demo"]);
+    assert_eq!(o.status.code(), Some(0));
+    let (l, _) = sesion_en(
+        &c,
+        &[llamada(1, "leer_conversacion", json!({"id":"cc-a1b2c3d4"}))],
+    );
+    let r = parse(&l[0]);
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let t = texto(&l[0]);
+    assert!(t.contains("Conversación excluida por el usuario"), "{t}");
+    assert!(!t.contains("PillMate"), "{t}");
 }

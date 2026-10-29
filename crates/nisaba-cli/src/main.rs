@@ -4,11 +4,11 @@ mod mcp;
 use clap::{Parser, Subcommand};
 use formato::texto_busqueda;
 use nisaba_core::busqueda::{buscar, resolver, Filtros, Resolucion, EXCLUIDA};
-use nisaba_core::db;
 use nisaba_core::indexador::{indexar, Progreso, ResultadoIndexado, Rutas};
 use nisaba_core::lector::{a_markdown, leer, Tramo};
 use nisaba_core::modelo::Fuente;
 use nisaba_core::salud::{aviso_limpieza_claude, informe};
+use nisaba_core::{db, exclusiones, exportar};
 use rusqlite::Connection;
 use std::io::IsTerminal;
 use std::path::PathBuf;
@@ -28,42 +28,82 @@ struct Cli {
 #[derive(Subcommand)]
 enum Orden {
     /// Busca en todas tus sesiones
+    #[command(visible_alias = "search")]
     Buscar {
         consulta: String,
         /// claude-code | codex
-        #[arg(long)]
+        #[arg(long, visible_alias = "source")]
         fuente: Option<String>,
-        #[arg(long)]
+        #[arg(long, visible_alias = "project")]
         proyecto: Option<String>,
         /// AAAA-MM-DD
-        #[arg(long)]
+        #[arg(long, visible_alias = "since")]
         desde: Option<String>,
-        #[arg(long)]
+        #[arg(long, visible_alias = "reasoning")]
         razonamiento: bool,
-        #[arg(long)]
+        #[arg(long, visible_alias = "code")]
         codigo: bool,
-        #[arg(long, default_value_t = 10)]
+        #[arg(long, visible_alias = "limit", default_value_t = 10)]
         limite: usize,
         #[arg(long)]
         json: bool,
     },
     /// Muestra una conversación en Markdown
+    #[command(visible_alias = "show")]
     Ver {
         id: String,
-        #[arg(long)]
+        #[arg(long, visible_alias = "from")]
         desde: Option<usize>,
-        #[arg(long, default_value_t = 20)]
+        #[arg(long, visible_alias = "count", default_value_t = 20)]
         cantidad: usize,
-        #[arg(long)]
+        #[arg(long, visible_alias = "all")]
         todo: bool,
     },
     /// Abre una conversación en la ventana de Nisaba
+    #[command(visible_alias = "open")]
     Abrir { id: String },
+    /// Guarda una conversación completa en Markdown
+    #[command(visible_alias = "export")]
+    Exportar {
+        id: String,
+        /// Incluye herramientas, razonamiento y eventos ocultos
+        #[arg(long, visible_alias = "all")]
+        todo: bool,
+        /// Archivo de destino (por defecto, nombre propuesto en la carpeta actual)
+        #[arg(long, visible_alias = "output")]
+        salida: Option<PathBuf>,
+        /// Exporta aunque haya posibles secretos
+        #[arg(long, visible_alias = "force")]
+        forzar: bool,
+    },
+    /// No indexar una carpeta (y sus subcarpetas)
+    #[command(visible_alias = "exclude")]
+    Excluir {
+        #[arg(required_unless_present_any = ["quitar", "lista"], conflicts_with_all = ["quitar", "lista"])]
+        carpeta: Option<String>,
+        /// Borra también lo ya guardado de esa carpeta
+        #[arg(long, visible_alias = "delete", requires = "carpeta")]
+        borrar: bool,
+        /// Vuelve a indexar una carpeta excluida
+        #[arg(
+            long,
+            visible_alias = "remove",
+            value_name = "CARPETA",
+            conflicts_with = "lista"
+        )]
+        quitar: Option<String>,
+        /// Lista las carpetas excluidas
+        #[arg(long, visible_alias = "list")]
+        lista: bool,
+    },
     /// Indexa lo nuevo
+    #[command(visible_alias = "index")]
     Indexar,
     /// Estado de salud de cada fuente
+    #[command(visible_alias = "health")]
     Salud,
     /// Búsquedas por día y canal (últimos 14 días)
+    #[command(visible_alias = "usage")]
     Uso,
     /// Servidor MCP por stdio (para Claude Code y otros agentes)
     Mcp,
@@ -198,6 +238,66 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 .map_err(|e| format!("No puedo abrir Nisaba: {e}. Instala nisaba-gui junto a nisaba o en el PATH."))?;
             Ok(0)
         }
+        Orden::Exportar {
+            id,
+            todo,
+            salida,
+            forzar,
+        } => {
+            indexar_antes(&mut conn, &rutas);
+            let doc = exportar::documento(&conn, &id, todo)?;
+            let secretos = exportar::posibles_secretos(&doc);
+            if !secretos.is_empty() && !forzar {
+                eprintln!("Posibles secretos en la conversación ({}):", secretos.len());
+                for h in &secretos {
+                    eprintln!("  {}: {}", h.tipo, h.muestra);
+                }
+                eprintln!("Revísalos; para exportar igualmente, usa --forzar.");
+                return Ok(1);
+            }
+            let destino = match salida {
+                Some(p) => p,
+                None => PathBuf::from(exportar::nombre_propuesto(&conn, &id, "md")?),
+            };
+            std::fs::write(&destino, doc).map_err(|x| format!("{}: {x}", destino.display()))?;
+            println!("Guardado en {}", destino.display());
+            Ok(0)
+        }
+        Orden::Excluir {
+            carpeta,
+            borrar,
+            quitar,
+            lista,
+        } => {
+            // Ruta absoluta sin resolver enlaces: la carpeta puede no existir ya.
+            let absoluta = |c: &str| {
+                std::path::absolute(c)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .map_err(|x| format!("{c}: {x}"))
+            };
+            if lista {
+                for c in exclusiones::lista(&conn).map_err(e)? {
+                    println!("{c}");
+                }
+            } else if let Some(c) = quitar {
+                exclusiones::quitar(&conn, &absoluta(&c)?).map_err(e)?;
+                println!("Volveré a indexar {c}.");
+            } else if let Some(c) = carpeta {
+                let c = absoluta(&c)?;
+                let n = exclusiones::anadir(&conn, &rutas, &c, borrar).map_err(e)?;
+                if borrar {
+                    println!("Excluida {c}; borradas {n} conversaciones.");
+                } else {
+                    println!("Excluida {c}.");
+                    if n > 0 {
+                        eprintln!(
+                            "Conservo {n} conversaciones de {c}; usa --borrar para eliminarlas."
+                        );
+                    }
+                }
+            }
+            Ok(0)
+        }
         Orden::Indexar => {
             let r = indexar(&mut conn, &rutas, &mut |p: Progreso| {
                 eprintln!("Indexando {}/{}…", p.vistos, p.total);
@@ -224,7 +324,7 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
         Orden::Salud => {
             indexar_antes(&mut conn, &rutas);
             for f in informe(&conn).map_err(e)? {
-                let marca = if f.vistos == f.parseados {
+                let marca = if f.vistos == f.parseados + f.excluidos {
                     "✓"
                 } else {
                     "✗"
@@ -233,8 +333,13 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                     .ultima
                     .as_deref()
                     .map(|u| u.chars().take(10).collect::<String>());
+                let excluidos = if f.excluidos > 0 {
+                    format!(" · excluidos {}", f.excluidos)
+                } else {
+                    String::new()
+                };
                 println!(
-                    "{marca} {}  vistos {} · parseados {} · avisos {} · última {}",
+                    "{marca} {}  vistos {} · parseados {}{excluidos} · avisos {} · última {}",
                     f.fuente.as_str(),
                     f.vistos,
                     f.parseados,

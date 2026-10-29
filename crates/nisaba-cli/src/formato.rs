@@ -24,7 +24,11 @@ pub fn texto_busqueda(r: &Respuesta, tty: bool, con_orden: bool) -> String {
             x.coincidencias
         ));
         s.push_str(&format!("   {}\n", resaltar(&x.fragmento, tty)));
+        if let Some(cwd) = &x.cwd {
+            s.push_str(&format!("   {cwd}\n"));
+        }
         if con_orden {
+            s.push_str(&format!("   id_original: {}\n", x.id_original));
             s.push_str(&format!("   alrededor_de: {}\n", x.orden_mensaje));
         }
     }

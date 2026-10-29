@@ -436,10 +436,16 @@ fn con_hora(base: String, hora: &Option<String>) -> String {
 
 pub fn a_markdown(l: &Lectura) -> String {
     let fin = l.desde + l.bloques.len();
+    let carpeta = l
+        .cwd
+        .as_deref()
+        .map(|c| format!("📁 `{c}`\n\n"))
+        .unwrap_or_default();
     let mut s = format!(
-        "# {}\n\n`{}` · bloques {}–{} de {}\n\n",
+        "# {}\n\n`{}` · `{}` · bloques {}–{} de {}\n\n{carpeta}",
         l.titulo,
         l.id_publico,
+        l.id_original,
         if l.bloques.is_empty() {
             l.desde
         } else {

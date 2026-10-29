@@ -397,6 +397,16 @@ pub fn resolver(conn: &Connection, id_publico_txt: &str) -> rusqlite::Result<Res
     })
 }
 
+/// Resuelve a una sola conversación visible o explica por qué no.
+pub fn resolver_unico(conn: &Connection, id: &str) -> Result<i64, String> {
+    match resolver(conn, id).map_err(|e| e.to_string())? {
+        Resolucion::Uno(c) => Ok(c),
+        Resolucion::Ninguno => Err(format!("No encuentro la conversación {id}")),
+        Resolucion::Ambiguo(ids) => Err(format!("Id ambiguo: {id} encaja con {}", ids.join(", "))),
+        Resolucion::Excluida => Err(EXCLUIDA.to_string()),
+    }
+}
+
 /// Atajo: `Some` solo si el id es único.
 pub fn resolver_id(conn: &Connection, id_publico: &str) -> rusqlite::Result<Option<i64>> {
     Ok(match resolver(conn, id_publico)? {
