@@ -1,6 +1,8 @@
 pub mod adaptadores;
 pub mod db;
+pub mod indexador;
 pub mod modelo;
+pub mod titulo;
 
 use std::path::PathBuf;
 
