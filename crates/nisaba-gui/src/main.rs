@@ -38,6 +38,8 @@ fn main() {
                 }
             }
         }))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .manage(aperturas)
         .manage(indexacion::Indexacion::default())
         .setup(|app| {
@@ -53,6 +55,16 @@ fn main() {
             comandos::salud,
             comandos::proyectos,
             comandos::aviso_limpieza,
+            comandos::documento,
+            comandos::guardar_como,
+            comandos::origen,
+            comandos::abrir_carpeta,
+            comandos::exclusiones_lista,
+            comandos::contar_en_carpeta,
+            comandos::excluir,
+            comandos::quitar_exclusion,
+            comandos::proyectos_con_carpeta,
+            comandos::elegir_carpeta,
             indexacion::iniciar,
             indexacion::estado_indexacion,
             aperturas::apertura_inicial

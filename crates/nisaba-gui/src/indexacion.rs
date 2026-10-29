@@ -76,6 +76,12 @@ impl Indexacion {
         std::thread::spawn(move || control.vigilar(app, rutas));
     }
 
+    /// Pasada fuera de la vigilancia (tras cambiar las exclusiones).
+    pub fn reindexar(&self, app: tauri::AppHandle) {
+        let control = self.clone();
+        std::thread::spawn(move || control.pasada(&app, &Rutas::desde_entorno(), None));
+    }
+
     fn emitir(&self, app: &tauri::AppHandle, estado: EstadoIndexacion) {
         *self.0.estado.lock().unwrap_or_else(|e| e.into_inner()) = estado.clone();
         if let Err(e) = app.emit("indexacion", &estado) {

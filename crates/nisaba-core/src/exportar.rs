@@ -146,6 +146,8 @@ pub fn posibles_secretos(texto: &str) -> Vec<Hallazgo> {
             }
         }
     }
+    let mut vistos = std::collections::HashSet::new();
+    hallazgos.retain(|h| vistos.insert((h.tipo, h.muestra.clone())));
     hallazgos
 }
 
@@ -171,16 +173,22 @@ pub fn nombre_archivo(
         out.trim_matches(['-', '.']).to_string()
     };
     let fecha = fin.filter(|f| f.len() >= 10).map(|f| f[..10].to_string());
-    let partes: Vec<String> = [fecha, proyecto.map(limpiar), Some(limpiar(titulo))]
+    // El título sale del primer mensaje: si lleva una clave, no va al nombre.
+    let titulo = if posibles_secretos(titulo).is_empty() {
+        titulo
+    } else {
+        ""
+    };
+    let mut titulo = limpiar(titulo);
+    if titulo.is_empty() {
+        titulo = "conversacion".to_string();
+    }
+    let base = [fecha, proyecto.map(limpiar), Some(titulo)]
         .into_iter()
         .flatten()
         .filter(|p| !p.is_empty())
-        .collect();
-    let base = if partes.is_empty() {
-        "conversacion".to_string()
-    } else {
-        partes.join("_")
-    };
+        .collect::<Vec<_>>()
+        .join("_");
     let base: String = base.chars().take(120).collect();
     format!("{}.{ext}", base.trim_end_matches(['-', '.', '_']))
 }
@@ -304,6 +312,26 @@ mod tests {
         assert_eq!(
             tipos("a sk-ant-api03-AbCdEfGhIjKlMnOpQrStUv y ghp_AbCdEfGhIjKlMnOpQrStUvWxYz01").len(),
             2
+        );
+    }
+
+    #[test]
+    fn el_mismo_secreto_repetido_cuenta_una_vez() {
+        let t =
+            "# usa sk-ant-api03-AbCdEfGhIjKlMnOpQra3F9\n\nusa sk-ant-api03-AbCdEfGhIjKlMnOpQra3F9";
+        assert_eq!(posibles_secretos(t).len(), 1);
+    }
+
+    #[test]
+    fn nombre_archivo_no_lleva_secretos() {
+        assert_eq!(
+            nombre_archivo(
+                None,
+                Some("P"),
+                "usa sk-ant-api03-AbCdEfGhIjKlMnOpQra3F9",
+                "md"
+            ),
+            "p_conversacion.md"
         );
     }
 

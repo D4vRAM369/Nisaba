@@ -96,6 +96,7 @@ fn excluir_antes_de_indexar_no_lee_ni_copia() {
 fn excluir_sin_borrar_oculta_en_busqueda_recientes_y_leer() {
     let mut e = entorno();
     correr(&mut e);
+    assert_eq!(nisaba_core::exclusiones::contar(&e.conn, DEMO).unwrap(), 2);
     assert_eq!(anadir(&e.conn, &e.rutas, DEMO, false).unwrap(), 2);
     correr(&mut e);
     let r = buscar(&e.conn, "PillMate", &Filtros::default(), "cli").unwrap();

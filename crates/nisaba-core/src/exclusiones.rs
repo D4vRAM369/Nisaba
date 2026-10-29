@@ -58,6 +58,33 @@ fn marcar_conversaciones(conn: &Connection, lista: &[String]) -> rusqlite::Resul
     Ok(())
 }
 
+/// Conversaciones ya guardadas bajo `carpeta`, con sus subagentes.
+fn afectadas(conn: &Connection, carpeta: &str) -> rusqlite::Result<HashSet<i64>> {
+    let solo = [carpeta.to_string()];
+    let todas: Vec<(i64, Option<i64>, Option<String>)> = conn
+        .prepare("SELECT id, padre_id, cwd FROM conversaciones")?
+        .query_map([], |f| Ok((f.get(0)?, f.get(1)?, f.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    let madres: HashSet<i64> = todas
+        .iter()
+        .filter(|(_, _, cwd)| cwd.as_deref().is_some_and(|c| cubierta(&solo, c)))
+        .map(|(id, _, _)| *id)
+        .collect();
+    let mut ids = madres.clone();
+    ids.extend(
+        todas
+            .iter()
+            .filter(|(_, p, _)| p.is_some_and(|p| madres.contains(&p)))
+            .map(|(id, _, _)| *id),
+    );
+    Ok(ids)
+}
+
+/// Cuántas conversaciones guardadas afectaría excluir `carpeta` (para preguntar antes).
+pub fn contar(conn: &Connection, carpeta: &str) -> rusqlite::Result<usize> {
+    Ok(afectadas(conn, carpeta)?.len())
+}
+
 /// Excluye `carpeta`. Devuelve cuántas conversaciones ya indexadas afecta (con sus subagentes).
 /// Con `borrar`, las elimina de la tablilla junto con sus copias: la única excepción
 /// a "la tablilla solo crece", y quien llama la ha confirmado antes.
@@ -73,25 +100,8 @@ pub fn anadir(
         [carpeta],
     )?;
     marcar_conversaciones(conn, &lista(conn)?)?;
-
     let solo = [carpeta.to_string()];
-    let mut ids: HashSet<i64> = HashSet::new();
-    let todas: Vec<(i64, Option<i64>, Option<String>)> = conn
-        .prepare("SELECT id, padre_id, cwd FROM conversaciones")?
-        .query_map([], |f| Ok((f.get(0)?, f.get(1)?, f.get(2)?)))?
-        .collect::<rusqlite::Result<_>>()?;
-    for (id, _, cwd) in &todas {
-        if cwd.as_deref().is_some_and(|c| cubierta(&solo, c)) {
-            ids.insert(*id);
-        }
-    }
-    let madres = ids.clone();
-    ids.extend(
-        todas
-            .iter()
-            .filter(|(_, p, _)| p.is_some_and(|p| madres.contains(&p)))
-            .map(|(id, _, _)| *id),
-    );
+    let ids = afectadas(conn, carpeta)?;
 
     // Archivos afectados: por su cwd o por ser la fuente de una conversación afectada.
     let mut archivos: Vec<(String, String, Option<String>)> = Vec::new();
