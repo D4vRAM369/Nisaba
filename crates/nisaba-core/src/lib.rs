@@ -4,6 +4,7 @@ pub mod db;
 pub mod indexador;
 pub mod lector;
 pub mod modelo;
+pub mod salud;
 pub mod titulo;
 
 use std::path::PathBuf;
