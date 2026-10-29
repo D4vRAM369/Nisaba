@@ -15,7 +15,7 @@ Encuentra por palabra o frase lo que hablaste con Claude Code o Codex, y reléel
 
 ## ¿Por qué este proyecto?
 
-Trabajo a diario con varias IAs. Lo que aprendí y decidí con ellas queda repartido en formatos y carpetas distintas, y una parte se pierde: **Claude Code borra por defecto las sesiones de más de 30 días**. Cuando quiero volver a "aquella conversación donde resolvimos X", acabo haciendo `grep` sobre archivos JSON ilegibles o me rindo.
+Trabajo a diario con varias IAs. Lo que aprendí y decidí con ellas queda repartido en formatos y carpetas distintas, y una parte se pierde: **Claude Code borra por defecto las sesiones de más de 30 días**. Quería tener un lugar donde poder acceder a mis conversaciones con mis IA frecuentes en mi propio PC, sin depender de las webs oficiales.
 
 Nisaba lee las sesiones que esas herramientas ya guardan en tu disco, las indexa y te deja **buscarlas y releerlas bien presentadas**: tus mensajes, las respuestas, el código y el Markdown, sin muros de llamadas a herramientas. Si una fuente borra una sesión, la tablilla la conserva: **la tablilla solo crece**.
 
