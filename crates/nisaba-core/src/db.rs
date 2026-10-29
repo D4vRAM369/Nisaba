@@ -40,7 +40,26 @@ pub fn abrir(ruta: &Path) -> rusqlite::Result<Connection> {
     con.pragma_update(None, "journal_mode", "WAL")?;
     con.pragma_update(None, "foreign_keys", true)?;
     con.execute_batch(ESQUEMA)?;
+    migrar(&con)?;
     Ok(con)
+}
+
+/// Migraciones por `PRAGMA user_version`. Nunca borran contenido.
+fn migrar(con: &Connection) -> rusqlite::Result<()> {
+    let version: i64 = con.query_row("PRAGMA user_version", [], |f| f.get(0))?;
+    if version < 1 {
+        // v1: carpeta de trabajo. Se vacían firma y huella para que la siguiente
+        // pasada relea cada fuente (o su copia) y rellene `cwd`.
+        con.execute_batch(
+            "BEGIN;
+             ALTER TABLE conversaciones ADD COLUMN cwd TEXT;
+             UPDATE archivos SET mtime = NULL;
+             UPDATE conversaciones SET huella = NULL;
+             PRAGMA user_version = 1;
+             COMMIT;",
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

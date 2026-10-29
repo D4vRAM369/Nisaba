@@ -189,15 +189,15 @@ fn escribir(
         None => None,
     };
     tx.execute(
-        "INSERT INTO conversaciones(fuente, id_original, padre_id, descripcion, proyecto, titulo, inicio, fin, hoja, ruta, huella)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+        "INSERT INTO conversaciones(fuente, id_original, padre_id, descripcion, proyecto, titulo, inicio, fin, hoja, ruta, huella, cwd)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
          ON CONFLICT(fuente, id_original) DO UPDATE SET padre_id=excluded.padre_id,
            descripcion=excluded.descripcion, proyecto=excluded.proyecto, titulo=excluded.titulo,
            inicio=excluded.inicio, fin=excluded.fin, hoja=excluded.hoja, ruta=excluded.ruta,
-           huella=excluded.huella",
+           huella=excluded.huella, cwd=excluded.cwd",
         params![
             fuente, conv.id_original, padre_id, conv.descripcion, proyecto, titulo, inicio, fin,
-            conv.hoja, ruta_txt, nueva
+            conv.hoja, ruta_txt, nueva, conv.cwd
         ],
     )?;
     let id: i64 = tx.query_row(
@@ -490,6 +490,8 @@ pub fn indexar(
         }
     }
 
+    rellenar_cwd_desde_copias(conn, rutas);
+
     for (id, fuente, padre) in pendientes {
         let _ = conn.execute(
             "UPDATE conversaciones SET padre_id=(SELECT id FROM conversaciones WHERE fuente=?1 AND id_original=?2) WHERE id=?3",
@@ -505,6 +507,37 @@ pub fn indexar(
         nuevos,
         cambiados,
         errores,
+    }
+}
+
+/// Tras migrar a v1, las conversaciones cuya fuente ya no existe siguen con `huella` vacía:
+/// su `cwd` se lee de la copia, sin tocar los mensajes. Sin copia, `cwd` queda NULL.
+fn rellenar_cwd_desde_copias(conn: &Connection, rutas: &Rutas) {
+    let filas: Vec<(i64, String, String)> = match conn.prepare(
+        "SELECT id, fuente, ruta FROM conversaciones WHERE huella IS NULL AND ruta IS NOT NULL",
+    ) {
+        Ok(mut st) => st
+            .query_map([], |f| Ok((f.get(0)?, f.get(1)?, f.get(2)?)))
+            .map(|it| it.flatten().collect())
+            .unwrap_or_default(),
+        Err(_) => return,
+    };
+    for (id, fuente, ruta) in filas {
+        let Some(fuente) = Fuente::desde_str(&fuente) else {
+            continue;
+        };
+        let cwd = destino_copia(rutas, fuente, Path::new(&ruta))
+            .ok()
+            .and_then(|copia| match fuente {
+                Fuente::ClaudeCode => claude_code::parsear(&copia).ok(),
+                Fuente::Codex => codex::parsear(&copia).ok(),
+            })
+            .and_then(|c| c.cwd);
+        // Huella vacía (no NULL): no se vuelve a intentar; si la fuente reaparece, se reescribe.
+        let _ = conn.execute(
+            "UPDATE conversaciones SET cwd = ?1, huella = '' WHERE id = ?2",
+            params![cwd, id],
+        );
     }
 }
 

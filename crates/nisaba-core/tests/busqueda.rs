@@ -355,3 +355,29 @@ fn recientes_respeta_fuente_proyecto_y_fecha() {
     .unwrap();
     assert_eq!(futuro.total_sesiones, 0);
 }
+
+#[test]
+fn resultado_y_lectura_exponen_cwd_e_id_original() {
+    let e = indexado();
+    let r = buscar(&e.conn, "subtitulos", &Filtros::default(), "cli").unwrap();
+    assert_eq!(
+        r.resultados[0].cwd.as_deref(),
+        Some("/home/u/Proyectos/Mirlo")
+    );
+    assert_eq!(r.resultados[0].id_original, "cx01");
+    let rec = nisaba_core::busqueda::recientes(&e.conn, &Filtros::default()).unwrap();
+    assert!(rec.resultados.iter().all(|x| x.cwd.is_some()));
+
+    let id = resolver_id(&e.conn, "cc-a1b2c3d4").unwrap().unwrap();
+    let l = nisaba_core::lector::leer(&e.conn, id, &Default::default()).unwrap();
+    assert_eq!(l.cwd.as_deref(), Some("/home/u/Proyectos/Demo"));
+    assert_eq!(l.id_original, "a1b2c3d4-0000-4000-8000-000000000001");
+    assert_eq!(l.fuente, nisaba_core::modelo::Fuente::ClaudeCode);
+    assert!(!l.es_subagente);
+    let hijo = resolver_id(&e.conn, "cc-agent-zz").unwrap().unwrap();
+    assert!(
+        nisaba_core::lector::leer(&e.conn, hijo, &Default::default())
+            .unwrap()
+            .es_subagente
+    );
+}

@@ -550,3 +550,55 @@ fn subagente_se_enlaza_si_padre_llega_en_otra_pasada() {
         );
     }
 }
+
+/// Deja la tablilla como la dejaba la v0.1.0: sin `cwd` y con `user_version = 0`.
+fn volver_a_v0(e: &mut Entorno) {
+    e.conn
+        .execute_batch("ALTER TABLE conversaciones DROP COLUMN cwd; PRAGMA user_version = 0;")
+        .unwrap();
+    e.conn = db::abrir(&e.rutas.home.join("tablilla.db")).unwrap();
+}
+
+fn cwd_principal(e: &Entorno) -> Option<String> {
+    e.conn
+        .query_row(
+            "SELECT cwd FROM conversaciones WHERE id_original=?1",
+            [PRINCIPAL],
+            |f| f.get(0),
+        )
+        .unwrap()
+}
+
+#[test]
+fn migracion_rellena_cwd() {
+    let mut e = entorno();
+    correr(&mut e);
+    volver_a_v0(&mut e);
+    correr(&mut e);
+    assert_eq!(cwd_principal(&e).as_deref(), Some("/home/u/Proyectos/Demo"));
+}
+
+#[test]
+fn migracion_rellena_cwd_desde_copia() {
+    let mut e = entorno();
+    correr(&mut e);
+    fs::remove_file(ruta_principal(&e)).unwrap();
+    volver_a_v0(&mut e);
+    correr(&mut e);
+    assert_eq!(cwd_principal(&e).as_deref(), Some("/home/u/Proyectos/Demo"));
+}
+
+#[test]
+fn migracion_conserva_conversacion_sin_fuente() {
+    let mut e = entorno();
+    correr(&mut e);
+    let mensajes = contar(&e.conn, "SELECT count(*) FROM mensajes");
+    let fts = contar(&e.conn, "SELECT count(*) FROM partes_fts");
+    fs::remove_file(ruta_principal(&e)).unwrap();
+    fs::remove_file(copia_principal(&e)).unwrap();
+    volver_a_v0(&mut e);
+    correr(&mut e);
+    assert_eq!(contar(&e.conn, "SELECT count(*) FROM mensajes"), mensajes);
+    assert_eq!(contar(&e.conn, "SELECT count(*) FROM partes_fts"), fts);
+    assert_eq!(cwd_principal(&e), None);
+}

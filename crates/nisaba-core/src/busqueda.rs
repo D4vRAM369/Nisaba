@@ -41,6 +41,9 @@ pub struct Resultado {
     pub coincidencias: i64,
     pub fragmento: String,
     pub orden_mensaje: i64,
+    /// Carpeta de trabajo de la sesión (madre, si es un subagente).
+    pub cwd: Option<String>,
+    pub id_original: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,6 +172,7 @@ struct Grupo {
     proyecto: Option<String>,
     fin: Option<String>,
     dias: f64,
+    cwd: Option<String>,
 }
 
 pub fn buscar(
@@ -215,7 +219,7 @@ pub fn buscar_sin_contar(
     // Los filtros y los datos mostrados son los de la sesión madre.
     let sql = format!(
         "SELECT g.id, p.id, m.orden, bm25(partes_fts), g.fuente, g.id_original, g.titulo, g.proyecto, g.fin,
-                COALESCE(julianday('now') - julianday(g.fin), 3650.0)
+                COALESCE(julianday('now') - julianday(g.fin), 3650.0), g.cwd
          FROM partes_fts
          JOIN partes p ON p.id = partes_fts.rowid
          JOIN mensajes m ON m.id = p.mensaje_id
@@ -244,6 +248,7 @@ pub fn buscar_sin_contar(
                     proyecto: r.get(7)?,
                     fin: r.get(8)?,
                     dias: r.get(9)?,
+                    cwd: r.get(10)?,
                 },
             ))
         },
@@ -293,6 +298,8 @@ pub fn buscar_sin_contar(
             coincidencias: g.coincidencias,
             fragmento,
             orden_mensaje: g.orden,
+            cwd: g.cwd,
+            id_original: g.id_original,
         });
     }
 
@@ -410,7 +417,7 @@ pub fn recientes_desde(
         "SELECT c.fuente,c.id_original,COALESCE(c.titulo,''),c.proyecto,c.fin,
          COALESCE((SELECT substr(p.contenido,1,180) FROM mensajes m JOIN partes p ON p.mensaje_id=m.id
            WHERE m.conversacion_id=c.id AND m.oculto=0 AND p.tipo='texto'
-           ORDER BY m.orden,p.orden LIMIT 1),'')
+           ORDER BY m.orden,p.orden LIMIT 1),''), c.cwd
          FROM conversaciones c WHERE {CONDICION} ORDER BY c.fin DESC,c.id DESC LIMIT ?4 OFFSET ?5"
     ))?;
     let resultados = st
@@ -435,6 +442,8 @@ pub fn recientes_desde(
                     fragmento: r.get(5)?,
                     coincidencias: 0,
                     orden_mensaje: 0,
+                    cwd: r.get(6)?,
+                    id_original: id,
                 })
             },
         )?

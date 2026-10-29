@@ -69,6 +69,11 @@ pub struct Lectura {
     pub bloques: Vec<Bloque>,
     /// Índice absoluto del bloque que corresponde a alrededor_de, si se pidió.
     pub coincidencia: Option<usize>,
+    pub cwd: Option<String>,
+    pub id_original: String,
+    pub fuente: Fuente,
+    /// Tiene sesión madre: no se puede reanudar por sí sola.
+    pub es_subagente: bool,
 }
 
 struct Msg {
@@ -253,16 +258,31 @@ fn cargar_hijos(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<Vec
 }
 
 pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Result<Lectura> {
-    let (fuente, id_original, titulo, hoja): (String, String, Option<String>, Option<String>) =
-        conn.query_row(
-            "SELECT fuente, id_original, titulo, hoja FROM conversaciones WHERE id = ?1",
-            [conversacion_id],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-        )?;
-    let publico = match Fuente::desde_str(&fuente) {
-        Some(f) => id_publico(f, &id_original),
-        None => id_original.chars().take(8).collect(),
-    };
+    #[allow(clippy::type_complexity)]
+    let (fuente, id_original, titulo, hoja, cwd, es_subagente): (
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        bool,
+    ) = conn.query_row(
+        "SELECT fuente, id_original, titulo, hoja, cwd, padre_id IS NOT NULL
+         FROM conversaciones WHERE id = ?1",
+        [conversacion_id],
+        |r| {
+            Ok((
+                r.get(0)?,
+                r.get(1)?,
+                r.get(2)?,
+                r.get(3)?,
+                r.get(4)?,
+                r.get(5)?,
+            ))
+        },
+    )?;
+    let fuente = Fuente::desde_str(&fuente).ok_or(rusqlite::Error::InvalidQuery)?;
+    let publico = id_publico(fuente, &id_original);
     let msgs = rama_activa(cargar_mensajes(conn, conversacion_id)?, hoja.as_deref());
     let mut hijos = cargar_hijos(conn, conversacion_id)?;
 
@@ -400,6 +420,10 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
         desde,
         bloques,
         coincidencia,
+        cwd,
+        id_original,
+        fuente,
+        es_subagente,
     })
 }
 
