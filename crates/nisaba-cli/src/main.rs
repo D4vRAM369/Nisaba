@@ -53,6 +53,8 @@ enum Orden {
         #[arg(long)]
         todo: bool,
     },
+    /// Abre una conversación en la ventana de Nisaba
+    Abrir { id: String },
     /// Indexa lo nuevo
     Indexar,
     /// Estado de salud de cada fuente
@@ -126,6 +128,25 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             let t = Tramo { desde, cantidad, alrededor_de: None, todo };
             let l = leer(&conn, cid, &t).map_err(e)?;
             print!("{}", a_markdown(&l));
+            Ok(0)
+        }
+        Orden::Abrir { id } => {
+            indexar_antes(&mut conn, &rutas);
+            match resolver(&conn, &id).map_err(e)? {
+                Resolucion::Ninguno => return Err(format!("No encuentro la conversación {id}")),
+                Resolucion::Ambiguo(ids) => return Err(format!("Id ambiguo: {id} encaja con {}", ids.join(", "))),
+                Resolucion::Uno(_) => {}
+            }
+            let nombre = format!("nisaba-gui{}", std::env::consts::EXE_SUFFIX);
+            let junto = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(&nombre)));
+            let ejecutable = junto.filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from(&nombre));
+            std::process::Command::new(ejecutable)
+                .args(["--abrir", &id])
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| format!("No puedo abrir Nisaba: {e}. Instala nisaba-gui junto a nisaba o en el PATH."))?;
             Ok(0)
         }
         Orden::Indexar => {
