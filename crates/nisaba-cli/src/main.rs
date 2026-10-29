@@ -100,7 +100,7 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 Some(s) => Some(Fuente::desde_str(s).ok_or("fuente desconocida: usa claude-code o codex")?),
             };
             indexar_antes(&mut conn, &rutas);
-            let f = Filtros { fuente, proyecto, desde, razonamiento, codigo, limite, ..Default::default() };
+            let f = Filtros { fuente, proyecto, desde, razonamiento, codigo, limite };
             let r = buscar(&conn, &consulta, &f, "cli").map_err(e)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&r).map_err(|x| x.to_string())?);

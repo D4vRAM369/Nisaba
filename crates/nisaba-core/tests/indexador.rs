@@ -336,3 +336,33 @@ fn vuelve_a_crecer_se_acepta() {
         .unwrap();
     assert_eq!(estado, "ok");
 }
+
+#[test]
+fn subagente_se_enlaza_si_padre_llega_en_otra_pasada() {
+    for borrar_hijo in [false, true] {
+        let mut e = entorno();
+        let padre = ruta_principal(&e);
+        let original = fs::read(&padre).unwrap();
+        fs::remove_file(&padre).unwrap();
+        correr(&mut e);
+        let padre_id = |e: &Entorno| -> Option<i64> {
+            e.conn.query_row(
+                "SELECT padre_id FROM conversaciones WHERE id_original='agent-zz'",
+                [], |f| f.get(0),
+            ).unwrap()
+        };
+        assert_eq!(padre_id(&e), None);
+        let mensajes = contar(&e.conn, "SELECT count(*) FROM mensajes m JOIN conversaciones c ON c.id=m.conversacion_id WHERE c.id_original='agent-zz'");
+        if borrar_hijo {
+            fs::remove_file(e.rutas.claude.join(format!("-home-u-Proyectos-Demo/{PRINCIPAL}/subagents/agent-zz.jsonl"))).unwrap();
+        }
+        fs::write(&padre, original).unwrap();
+        correr(&mut e);
+        let esperado = e.conn.query_row(
+            "SELECT id FROM conversaciones WHERE id_original=?1", [PRINCIPAL], |f| f.get(0),
+        ).unwrap();
+        assert_eq!(padre_id(&e), Some(esperado));
+        assert_eq!(contar(&e.conn, "SELECT count(*) FROM mensajes m JOIN conversaciones c ON c.id=m.conversacion_id WHERE c.id_original='agent-zz'"), mensajes);
+        assert_eq!(correr(&mut e), ResultadoIndexado::Hecho { nuevos: 0, cambiados: 0, errores: 0 });
+    }
+}

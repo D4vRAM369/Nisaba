@@ -203,8 +203,10 @@ fn leer_tool(conn: &Connection, id: &str, args: &Value) -> Result<String, String
             return Err(format!("Id ambiguo: {id} encaja con {}", ids.join(", ")))
         }
     };
-    let mut t = Tramo::default();
-    t.desde = entero(args, "desde").map(|n| n.max(0) as usize);
+    let mut t = Tramo {
+        desde: entero(args, "desde").map(|n| n.max(0) as usize),
+        ..Default::default()
+    };
     if let Some(c) = entero(args, "cantidad") {
         t.cantidad = c.max(1) as usize;
     }

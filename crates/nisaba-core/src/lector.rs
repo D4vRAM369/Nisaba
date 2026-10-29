@@ -27,7 +27,8 @@ pub enum Bloque {
     Usuario { hora: Option<String>, texto: String },
     Asistente { modelo: Option<String>, hora: Option<String>, texto: String },
     Herramientas { n: usize, archivos: usize },
-    Razonamiento { texto: String },
+    Razonamiento { texto: String, desplegado: bool },
+    Herramienta { texto: String },
     Subagente { id_publico: String, descripcion: String },
     Sistema { texto: String },
 }
@@ -222,12 +223,8 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
                     Bloque::Sistema { texto: contenido.clone() }
                 } else {
                     match tipo.as_str() {
-                        "razonamiento" => Bloque::Razonamiento { texto: contenido.clone() },
-                        "herramienta" => Bloque::Herramientas { n: 1, archivos: {
-                            let mut g = Grupo::default();
-                            g.sumar(contenido);
-                            g.archivos.len()
-                        } },
+                        "razonamiento" => Bloque::Razonamiento { texto: contenido.clone(), desplegado: true },
+                        "herramienta" => Bloque::Herramienta { texto: contenido.clone() },
                         _ => bloque_texto(m, contenido.clone()),
                     }
                 };
@@ -259,7 +256,7 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
                 }
                 "razonamiento" => {
                     vaciar(&mut c, &mut texto_pendiente);
-                    c.poner(m.orden, Bloque::Razonamiento { texto: contenido.clone() });
+                    c.poner(m.orden, Bloque::Razonamiento { texto: contenido.clone(), desplegado: false });
                 }
                 _ => {
                     // texto e imagen: texto consecutivo del mismo mensaje se une.
@@ -330,8 +327,15 @@ pub fn a_markdown(l: &Lectura) -> String {
             Bloque::Herramientas { n, archivos } => {
                 s.push_str(&format!("> 🔧 {n} herramientas · {archivos} archivos\n\n"));
             }
-            Bloque::Razonamiento { texto } => {
-                s.push_str(&format!("> 💭 Razonamiento ({} caracteres)\n\n", texto.chars().count()));
+            Bloque::Razonamiento { texto, desplegado } => {
+                if *desplegado {
+                    s.push_str(&format!("### 💭 Razonamiento\n\n{texto}\n\n"));
+                } else {
+                    s.push_str(&format!("> 💭 Razonamiento ({} caracteres)\n\n", texto.chars().count()));
+                }
+            }
+            Bloque::Herramienta { texto } => {
+                s.push_str(&format!("### 🔧 Herramienta\n\n{texto}\n\n"));
             }
             Bloque::Subagente { id_publico, descripcion } => {
                 s.push_str(&format!("> 🤖 Subagente {id_publico}: {descripcion}\n\n"));

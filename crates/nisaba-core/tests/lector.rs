@@ -181,3 +181,33 @@ fn rama_cruza_la_compactacion() {
     assert!(md.contains("respuesta anterior a compactar"), "{md}");
     assert!(md.contains("respuesta posterior"), "{md}");
 }
+
+#[test]
+fn todo_permite_leer_razonamiento_y_herramientas() {
+    let e = entorno();
+    e.conn.execute(
+        "INSERT INTO conversaciones(fuente, id_original, titulo) VALUES ('codex','detalle-0001','Detalle')",
+        [],
+    ).unwrap();
+    let cid = e.conn.last_insert_rowid();
+    e.conn.execute(
+        "INSERT INTO mensajes(conversacion_id, orden, rol, oculto) VALUES (?1, 0, 'asistente', 0)",
+        [cid],
+    ).unwrap();
+    let mid = e.conn.last_insert_rowid();
+    let razonamiento = "Comparo las rutas\ny elijo la más corta.";
+    let herramienta = "Read: {\"file_path\":\"/tmp/inventado.rs\"}";
+    for (orden, tipo, contenido) in [(0, "razonamiento", razonamiento), (1, "herramienta", herramienta)] {
+        e.conn.execute(
+            "INSERT INTO partes(mensaje_id, orden, tipo, contenido) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![mid, orden, tipo, contenido],
+        ).unwrap();
+    }
+    let normal = a_markdown(&leer(&e.conn, cid, &Tramo::default()).unwrap());
+    assert!(!normal.contains(razonamiento));
+    assert!(!normal.contains(herramienta));
+    assert!(normal.contains("1 herramientas · 1 archivos"));
+    let todo = a_markdown(&leer(&e.conn, cid, &Tramo { todo: true, ..Default::default() }).unwrap());
+    assert!(todo.contains(razonamiento), "{todo}");
+    assert!(todo.contains(herramienta), "{todo}");
+}

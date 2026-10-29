@@ -249,27 +249,57 @@ fn destino_copia(rutas: &Rutas, fuente: Fuente, origen: &Path) -> Result<PathBuf
 /// Los bytes se copian tal cual (un `.jsonl.zst` sigue siendo `.zst`). Si el original es más pequeño
 /// que la copia ya guardada, la copia no se pisa: la versión nueva va al lado como `.encogido-<UTC>`.
 fn copiar_original(rutas: &Rutas, fuente: Fuente, origen: &Path) -> Result<(), String> {
+    let ahora = std::time::SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    copiar_original_con_marca(rutas, fuente, origen, &marca_utc(ahora))
+}
+
+fn copiar_original_con_marca(
+    rutas: &Rutas,
+    fuente: Fuente,
+    origen: &Path,
+    marca: &str,
+) -> Result<(), String> {
     let mut destino = destino_copia(rutas, fuente, origen)?;
     let dir = destino.parent().ok_or("ruta sin carpeta")?.to_path_buf();
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let tam_origen = fs::metadata(origen).map_err(|e| format!("{}: {e}", origen.display()))?.len();
-    if fs::metadata(&destino).is_ok_and(|m| m.len() > tam_origen) {
-        let ahora = std::time::SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+    let encogido = fs::metadata(&destino).is_ok_and(|m| m.len() > tam_origen);
+    if encogido {
         let mut nombre = destino.file_name().ok_or("ruta sin nombre")?.to_os_string();
-        nombre.push(format!(".encogido-{}", marca_utc(ahora)));
+        nombre.push(format!(".encogido-{marca}"));
         destino = dir.join(nombre);
     }
     let mut tmp = destino.clone().into_os_string();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
     fs::copy(origen, &tmp).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    fs::rename(&tmp, &destino).map_err(|e| {
+    if encogido {
+        let base = destino.clone().into_os_string();
+        let mut numero = 0_u64;
+        let resultado = loop {
+            // Publica el archivo completo sin sustituir ninguna versión ya guardada.
+            match fs::hard_link(&tmp, &destino) {
+                Ok(()) => break Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    numero += 1;
+                    let mut nombre = base.clone();
+                    nombre.push(format!("-{numero}"));
+                    destino = PathBuf::from(nombre);
+                }
+                Err(e) => break Err(format!("{}: {e}", destino.display())),
+            }
+        };
         let _ = fs::remove_file(&tmp);
-        format!("{}: {e}", destino.display())
-    })
+        resultado
+    } else {
+        fs::rename(&tmp, &destino).map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            format!("{}: {e}", destino.display())
+        })
+    }
 }
 
 pub fn indexar(
@@ -386,6 +416,30 @@ pub fn indexar(
         }
     }
 
+    // Claude define el padre por `<sesion>/subagents/<archivo>` (ver su adaptador).
+    // Recupera también los hijos de pasadas anteriores, aunque su original ya no exista.
+    if let Ok(mut st) = conn.prepare(
+        "SELECT id, ruta FROM conversaciones WHERE padre_id IS NULL AND fuente='claude-code' AND ruta IS NOT NULL",
+    ) {
+        if let Ok(filas) = st.query_map([], |f| Ok((f.get::<_, i64>(0)?, f.get::<_, String>(1)?))) {
+            for (id, ruta) in filas.flatten() {
+                let ruta = Path::new(&ruta);
+                if let Some(carpeta) = ruta
+                    .parent()
+                    .filter(|d| d.file_name().is_some_and(|n| n == "subagents"))
+                {
+                    if let Some(padre) = carpeta
+                        .parent()
+                        .and_then(|d| d.file_name())
+                        .and_then(|n| n.to_str())
+                    {
+                        pendientes.push((id, Fuente::ClaudeCode, padre.to_string()));
+                    }
+                }
+            }
+        }
+    }
+
     for (id, fuente, padre) in pendientes {
         let _ = conn.execute(
             "UPDATE conversaciones SET padre_id=(SELECT id FROM conversaciones WHERE fuente=?1 AND id_original=?2) WHERE id=?3",
@@ -406,6 +460,32 @@ fn parsear(c: &Candidato) -> Result<ConversacionParseada, String> {
 
 #[cfg(test)]
 mod pruebas {
+    #[test]
+    fn copias_encogidas_con_la_misma_marca_se_conservan() {
+        let dir = tempfile::tempdir().unwrap();
+        let rutas = super::Rutas {
+            home: dir.path().join("home"),
+            claude: dir.path().join("claude"),
+            codex: dir.path().join("codex"),
+        };
+        std::fs::create_dir_all(&rutas.claude).unwrap();
+        let origen = rutas.claude.join("sesion.jsonl");
+        let fuente = crate::modelo::Fuente::ClaudeCode;
+        let marca = "20261029T120000Z";
+        for contenido in ["original completo", "primera", "otra"] {
+            std::fs::write(&origen, contenido).unwrap();
+            super::copiar_original_con_marca(&rutas, fuente, &origen, marca).unwrap();
+        }
+        let destino = super::destino_copia(&rutas, fuente, &origen).unwrap();
+        assert_eq!(std::fs::read_to_string(&destino).unwrap(), "original completo");
+        let mut versiones: Vec<_> = std::fs::read_dir(destino.parent().unwrap())
+            .unwrap()
+            .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+            .collect();
+        versiones.sort();
+        assert_eq!(versiones, ["original completo", "otra", "primera"]);
+    }
+
     #[test]
     fn marca_utc_formato() {
         assert_eq!(super::marca_utc(0), "19700101T000000Z");
