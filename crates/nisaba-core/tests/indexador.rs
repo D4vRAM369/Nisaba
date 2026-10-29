@@ -1,51 +1,13 @@
-use nisaba_core::db;
-use nisaba_core::indexador::{indexar, Progreso, ResultadoIndexado, Rutas};
+use nisaba_core::indexador::ResultadoIndexado;
 use nisaba_core::modelo::{Mensaje, Parte, Rol, TipoParte};
 use nisaba_core::titulo::titulo_util;
 use rusqlite::Connection;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+mod comun;
+use comun::{correr, entorno, Entorno};
 
 const PRINCIPAL: &str = "a1b2c3d4-0000-4000-8000-000000000001";
-
-fn copiar(origen: &Path, destino: &Path) {
-    fs::create_dir_all(destino).unwrap();
-    for e in fs::read_dir(origen).unwrap() {
-        let e = e.unwrap();
-        let d = destino.join(e.file_name());
-        if e.file_type().unwrap().is_dir() {
-            copiar(&e.path(), &d);
-        } else {
-            fs::copy(e.path(), d).unwrap();
-        }
-    }
-}
-
-struct Entorno {
-    _dir: tempfile::TempDir,
-    rutas: Rutas,
-    conn: Connection,
-}
-
-fn entorno() -> Entorno {
-    let dir = tempfile::tempdir().unwrap();
-    let fx = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    let claude = dir.path().join("claude");
-    let codex = dir.path().join("codex");
-    copiar(&fx.join("claude"), &claude);
-    copiar(&fx.join("codex"), &codex);
-    let home = dir.path().join("home");
-    let conn = db::abrir(&home.join("tablilla.db")).unwrap();
-    Entorno {
-        rutas: Rutas { home, claude, codex },
-        conn,
-        _dir: dir,
-    }
-}
-
-fn correr(e: &mut Entorno) -> ResultadoIndexado {
-    indexar(&mut e.conn, &e.rutas, &mut |_p: Progreso| {})
-}
 
 fn contar(c: &Connection, sql: &str) -> i64 {
     c.query_row(sql, [], |f| f.get(0)).unwrap()

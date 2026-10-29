@@ -97,3 +97,9 @@ pub struct ConversacionParseada {
     pub mensajes: Vec<Mensaje>,
     pub avisos: Vec<String>,
 }
+
+impl serde::Serialize for Fuente {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.as_str())
+    }
+}

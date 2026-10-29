@@ -1,4 +1,5 @@
 pub mod adaptadores;
+pub mod busqueda;
 pub mod db;
 pub mod indexador;
 pub mod modelo;

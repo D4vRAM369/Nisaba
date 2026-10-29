@@ -8,4 +8,4 @@
 {"timestamp":"2026-10-01T10:00:06.000Z","type":"response_item","payload":{"type":"reasoning","summary":[],"encrypted_content":"BBBB"}}
 {"timestamp":"2026-10-01T10:00:07.000Z","type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"grep -n srt src/lib.rs","call_id":"c1"}}
 {"timestamp":"2026-10-01T10:00:08.000Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":[{"type":"input_text","text":"42:fn parse_srt()"}]}}
-{"timestamp":"2026-10-01T10:00:09.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Corregido el parseo del SRT."}]}}
+{"timestamp":"2026-10-01T10:00:09.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Corregido el parseo."}]}}
