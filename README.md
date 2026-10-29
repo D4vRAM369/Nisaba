@@ -120,7 +120,7 @@ Después, en una sesión nueva, pídele algo como *"busca en mis conversaciones 
 | v0.3 | Pi |
 | v0.4 | Gemini CLI |
 | v0.5 | Antigravity (parcial) |
-| v0.6 | Exportaciones ZIP de ChatGPT y Claude.ai |
+| v0.6 | Exportaciones oficiales de Claude.ai y ChatGPT: pipeline de importación del ZIP que pides y descargas, para ver todo tu archivo (conversaciones, proyectos y adjuntos) en Nisaba, cifrado en reposo con AES-256-GCM y clave derivada de tu contraseña con Argon2id |
 | v0.7 | Tema claro "Arcilla", barra lateral, atajo global, inglés en la interfaz, aviso de secretos, exportar a Markdown |
 | v1.0 | Todo lo anterior, estable |
 

@@ -122,7 +122,7 @@ Then, in a new session, ask something like *"search my conversations for where w
 | v0.3 | Pi |
 | v0.4 | Gemini CLI |
 | v0.5 | Antigravity (partial) |
-| v0.6 | ChatGPT and Claude.ai ZIP exports |
+| v0.6 | Official Claude.ai and ChatGPT exports: an import pipeline for the ZIP you request and download, so you can browse your whole archive (conversations, projects and attachments) in Nisaba, encrypted at rest with AES-256-GCM and a key derived from your password with Argon2id |
 | v0.7 | "Arcilla" light theme, sidebar, global shortcut, English UI, secrets warning, Markdown export |
 | v1.0 | All of the above, stable |
 
