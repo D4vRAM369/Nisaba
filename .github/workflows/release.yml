@@ -18,9 +18,12 @@ jobs:
     steps:
       - id: crear
         run: |
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft --prerelease \
-            --title "Nisaba $GITHUB_REF_NAME" --notes "Prerelease. Instrucciones de instalación en el README."
-          id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq ".[] | select(.tag_name == \"$GITHUB_REF_NAME\") | .id" | head -n1)
+          # La API devuelve el id al crear; buscarlo después falla porque un borrador aún no tiene etiqueta asociada.
+          id=$(gh api -X POST "repos/$GITHUB_REPOSITORY/releases" \
+            -f tag_name="$GITHUB_REF_NAME" -f name="Nisaba $GITHUB_REF_NAME" \
+            -f body="Prerelease. Instrucciones de instalación en el README." \
+            -F draft=true -F prerelease=true --jq .id)
+          test -n "$id"
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
   paquetes:
