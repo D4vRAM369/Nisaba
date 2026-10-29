@@ -106,7 +106,7 @@ fn herramientas() -> Value {
     json!([
         {
             "name": "buscar_conversaciones",
-            "description": "Busca en las conversaciones pasadas de Brian con IAs (Claude Code, Codex) por palabra o frase. Úsala cuando pregunte '¿recuerdas cuando…?'. Devuelve sesiones con id, título y fragmento.",
+            "description": "Busca en las conversaciones pasadas del usuario con IAs (Claude Code, Codex) por palabra o frase. Úsala cuando pregunte '¿recuerdas cuando…?'. Devuelve sesiones con id, título y fragmento.",
             "inputSchema": {
                 "type": "object",
                 "properties": {

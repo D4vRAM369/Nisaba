@@ -65,6 +65,11 @@ fn initialize_y_lista() {
         .map(|t| t["name"].as_str().unwrap())
         .collect();
     assert_eq!(nombres, ["buscar_conversaciones", "leer_conversacion"]);
+    let descripcion = b["result"]["tools"][0]["description"].as_str().unwrap();
+    assert!(
+        descripcion.contains("del usuario") && !descripcion.contains("Brian"),
+        "{descripcion}"
+    );
 }
 
 #[test]
