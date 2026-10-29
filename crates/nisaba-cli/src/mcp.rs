@@ -2,7 +2,7 @@
 //! stdout es exclusivamente JSON-RPC; todo log va a stderr.
 
 use crate::formato::texto_busqueda;
-use nisaba_core::busqueda::{buscar, resolver_id, Filtros};
+use nisaba_core::busqueda::{buscar, resolver, Filtros, Resolucion};
 use nisaba_core::db;
 use nisaba_core::indexador::{indexar, Progreso, ResultadoIndexado, Rutas};
 use nisaba_core::lector::{a_markdown, leer, Tramo};
@@ -196,8 +196,12 @@ fn buscar_tool(conn: &Connection, consulta: &str, args: &Value) -> Result<String
 }
 
 fn leer_tool(conn: &Connection, id: &str, args: &Value) -> Result<String, String> {
-    let Some(cid) = resolver_id(conn, id).map_err(|e| e.to_string())? else {
-        return Err(format!("No encuentro la conversación {id}"));
+    let cid = match resolver(conn, id).map_err(|e| e.to_string())? {
+        Resolucion::Uno(c) => c,
+        Resolucion::Ninguno => return Err(format!("No encuentro la conversación {id}")),
+        Resolucion::Ambiguo(ids) => {
+            return Err(format!("Id ambiguo: {id} encaja con {}", ids.join(", ")))
+        }
     };
     let mut t = Tramo::default();
     t.desde = entero(args, "desde").map(|n| n.max(0) as usize);

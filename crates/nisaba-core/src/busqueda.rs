@@ -282,25 +282,49 @@ pub fn id_publico(fuente: Fuente, id_original: &str) -> String {
     format!("{}-{corto}", fuente.prefijo())
 }
 
-/// `cc-a1b2c3d4` → id interno de la conversación (prefiere la sesión madre a un subagente).
-pub fn resolver_id(conn: &Connection, id_publico: &str) -> rusqlite::Result<Option<i64>> {
-    let Some((prefijo, resto)) = id_publico.split_once('-') else { return Ok(None) };
+/// Resultado de resolver un id público.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Resolucion {
+    Uno(i64),
+    Ninguno,
+    /// Más de una conversación encaja; trae sus ids públicos completos.
+    Ambiguo(Vec<String>),
+}
+
+/// `cc-a1b2c3d4` → conversación. Cada fila se compara por el extremo que usa
+/// `id_publico` para ella (`por_el_final`); si encajan varias no se elige ninguna.
+pub fn resolver(conn: &Connection, id_publico_txt: &str) -> rusqlite::Result<Resolucion> {
+    let Some((prefijo, resto)) = id_publico_txt.split_once('-') else { return Ok(Resolucion::Ninguno) };
     let Some(fuente) = [Fuente::ClaudeCode, Fuente::Codex].into_iter().find(|f| f.prefijo() == prefijo) else {
-        return Ok(None);
+        return Ok(Resolucion::Ninguno);
     };
     if resto.is_empty() {
-        return Ok(None);
+        return Ok(Resolucion::Ninguno);
     }
     // substr en vez de LIKE: los ids pueden llevar `_` o `%`.
     let mut stmt = conn.prepare(
-        "SELECT id FROM conversaciones
+        "SELECT id, id_original FROM conversaciones
          WHERE fuente = ?1
-           AND (substr(id_original, 1, ?3) = ?2 OR substr(id_original, -?3) = ?2)
-         ORDER BY padre_id IS NOT NULL, id LIMIT 1",
+           AND CASE WHEN fuente = 'codex' OR substr(id_original, 1, 6) = 'agent-'
+                    THEN substr(id_original, -?3) ELSE substr(id_original, 1, ?3) END = ?2
+         ORDER BY id LIMIT 5",
     )?;
-    let mut filas = stmt.query(params![fuente.as_str(), resto, resto.chars().count() as i64])?;
-    match filas.next()? {
-        Some(r) => Ok(Some(r.get(0)?)),
-        None => Ok(None),
-    }
+    let filas: Vec<(i64, String)> = stmt
+        .query_map(params![fuente.as_str(), resto, resto.chars().count() as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(match filas.len() {
+        0 => Resolucion::Ninguno,
+        1 => Resolucion::Uno(filas[0].0),
+        _ => Resolucion::Ambiguo(filas.iter().map(|(_, o)| format!("{prefijo}-{o}")).collect()),
+    })
+}
+
+/// Atajo: `Some` solo si el id es único.
+pub fn resolver_id(conn: &Connection, id_publico: &str) -> rusqlite::Result<Option<i64>> {
+    Ok(match resolver(conn, id_publico)? {
+        Resolucion::Uno(i) => Some(i),
+        _ => None,
+    })
 }

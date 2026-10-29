@@ -3,7 +3,7 @@ mod mcp;
 
 use clap::{Parser, Subcommand};
 use formato::texto_busqueda;
-use nisaba_core::busqueda::{buscar, resolver_id, Filtros};
+use nisaba_core::busqueda::{buscar, resolver, Filtros, Resolucion};
 use nisaba_core::db;
 use nisaba_core::indexador::{indexar, Progreso, ResultadoIndexado, Rutas};
 use nisaba_core::lector::{a_markdown, leer, Tramo};
@@ -112,9 +112,16 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
         }
         Orden::Ver { id, desde, cantidad, todo } => {
             indexar_antes(&mut conn, &rutas);
-            let Some(cid) = resolver_id(&conn, &id).map_err(e)? else {
-                eprintln!("No encuentro la conversación {id}");
-                return Ok(1);
+            let cid = match resolver(&conn, &id).map_err(e)? {
+                Resolucion::Uno(c) => c,
+                Resolucion::Ninguno => {
+                    eprintln!("No encuentro la conversación {id}");
+                    return Ok(1);
+                }
+                Resolucion::Ambiguo(ids) => {
+                    eprintln!("Id ambiguo: {id} encaja con {}", ids.join(", "));
+                    return Ok(1);
+                }
             };
             let t = Tramo { desde, cantidad, alrededor_de: None, todo };
             let l = leer(&conn, cid, &t).map_err(e)?;

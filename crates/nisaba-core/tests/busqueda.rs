@@ -157,3 +157,30 @@ fn ids_publicos_distinguen_uuid7_y_subagentes() {
     assert_eq!(orig(&id_publico(Fuente::Codex, b)), b);
     assert_eq!(orig("cc-cd34ef56"), "agent-ab12cd34ef56");
 }
+
+#[test]
+fn resolver_respeta_el_extremo_de_cada_fila_y_detecta_ambiguedad() {
+    use nisaba_core::busqueda::{resolver, Resolucion};
+    let e = indexado();
+    let ins = |f: &str, id: &str| {
+        e.conn
+            .execute("INSERT INTO conversaciones(fuente, id_original) VALUES (?1, ?2)", [f, id])
+            .unwrap();
+        e.conn.last_insert_rowid()
+    };
+    // A (Codex, por el final) acaba en "deadbeef"; B (Claude normal, por el principio)
+    // empieza por "deadbeef": en su fuente cada uno solo responde a su extremo.
+    let a = ins("codex", "01a00000-0000-7000-8000-0000deadbeef");
+    let _otro = ins("codex", "deadbeef-0000-7000-8000-000000000000");
+    let b = ins("claude-code", "deadbeef-1111-4000-8000-000000000000");
+    let _c = ins("claude-code", "11111111-1111-4000-8000-0000deadbeef");
+    assert_eq!(resolver(&e.conn, "cx-deadbeef").unwrap(), Resolucion::Uno(a));
+    assert_eq!(resolver(&e.conn, "cc-deadbeef").unwrap(), Resolucion::Uno(b));
+    // Dos filas con el mismo final: ambiguo, no se elige.
+    ins("codex", "01a11111-0000-7000-8000-1111deadbeef");
+    match resolver(&e.conn, "cx-deadbeef").unwrap() {
+        Resolucion::Ambiguo(v) => assert_eq!(v.len(), 2),
+        o => panic!("{o:?}"),
+    }
+    assert!(resolver_id(&e.conn, "cx-deadbeef").unwrap().is_none());
+}

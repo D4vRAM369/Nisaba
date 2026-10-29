@@ -6,6 +6,7 @@ use std::fs;
 use std::path::PathBuf;
 mod comun;
 use comun::{correr, entorno, Entorno};
+use nisaba_core::db;
 
 const PRINCIPAL: &str = "a1b2c3d4-0000-4000-8000-000000000001";
 
@@ -174,4 +175,60 @@ fn fallo_si_home_es_un_archivo() {
     fs::write(&f, "x").unwrap();
     e.rutas.home = f;
     assert!(matches!(correr(&mut e), ResultadoIndexado::Fallo(_)));
+}
+
+fn rollout(id: &str, texto: &str) -> String {
+    format!(
+        "{{\"timestamp\":\"2026-10-01T10:00:00.000Z\",\"type\":\"session_meta\",\"payload\":{{\"id\":\"{id}\",\"cwd\":\"/home/u/P\"}}}}\n\
+         {{\"timestamp\":\"2026-10-01T10:00:01.000Z\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":\"{texto}\"}}]}}}}\n"
+    )
+}
+
+fn entorno_vacio() -> Entorno {
+    let mut e = entorno();
+    std::fs::remove_dir_all(&e.rutas.claude).unwrap();
+    std::fs::remove_dir_all(&e.rutas.codex).unwrap();
+    std::fs::create_dir_all(&e.rutas.claude).unwrap();
+    e.conn = db::abrir(&e.rutas.home.join("tablilla.db")).unwrap();
+    e
+}
+
+#[test]
+fn codex_jsonl_y_zst_de_la_misma_sesion_no_hacen_vaivén() {
+    let mut e = entorno_vacio();
+    let plano = rollout("mismo-id", "conversación inventada");
+    let dir = e.rutas.codex.join("sessions/2026/10/01");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rollout-2026-10-01T10-00-00-mismo-id.jsonl"), &plano).unwrap();
+    let zst = ruzstd::encoding::compress_to_vec(plano.as_bytes(), ruzstd::encoding::CompressionLevel::Fastest);
+    std::fs::write(dir.join("rollout-2026-10-01T10-00-00-mismo-id.jsonl.zst"), zst).unwrap();
+
+    let r1 = correr(&mut e);
+    assert!(matches!(r1, ResultadoIndexado::Hecho { errores: 0, .. }), "{r1:?}");
+    let n: i64 = e.conn.query_row("SELECT count(*) FROM conversaciones", [], |f| f.get(0)).unwrap();
+    assert_eq!(n, 1);
+    match correr(&mut e) {
+        ResultadoIndexado::Hecho { nuevos, cambiados, errores } => {
+            assert_eq!((nuevos, cambiados, errores), (0, 0, 0));
+        }
+        o => panic!("{o:?}"),
+    }
+}
+
+#[test]
+fn zst_corrupto_es_error_en_archivos_sin_panico() {
+    let mut e = entorno_vacio();
+    let dir = e.rutas.codex.join("sessions/2026/10/01");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("rollout-2026-10-01T10-00-00-roto.jsonl.zst"), b"esto no es zstd").unwrap();
+    match correr(&mut e) {
+        ResultadoIndexado::Hecho { errores, .. } => assert_eq!(errores, 1),
+        o => panic!("{o:?}"),
+    }
+    let (estado, err): (String, Option<String>) = e
+        .conn
+        .query_row("SELECT estado, error FROM archivos", [], |f| Ok((f.get(0)?, f.get(1)?)))
+        .unwrap();
+    assert_eq!(estado, "error");
+    assert!(err.unwrap().contains("zstd"));
 }
