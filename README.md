@@ -116,11 +116,11 @@ Después, en una sesión nueva, pídele algo como *"busca en mis conversaciones 
 | Versión | Contenido |
 |---|---|
 | **v0.1** | Claude Code + Codex, CLI, MCP, ventana, panel de salud |
-| v0.2 | OpenCode |
-| v0.3 | Pi |
-| v0.4 | Gemini CLI |
-| v0.5 | Antigravity (parcial) |
-| v0.6 | Exportaciones oficiales de Claude.ai y ChatGPT: pipeline de importación del ZIP que pides y descargas, para ver todo tu archivo (conversaciones, proyectos y adjuntos) en Nisaba, cifrado en reposo con AES-256-GCM y clave derivada de tu contraseña con Argon2id |
+| v0.2 | Exportaciones oficiales de Claude.ai y ChatGPT: pipeline de importación del ZIP que pides y descargas, para ver todo tu archivo (conversaciones, proyectos y adjuntos) en Nisaba, cifrado en reposo con AES-256-GCM y clave derivada de tu contraseña con Argon2id |
+| v0.3 | OpenCode |
+| v0.4 | Pi |
+| v0.5 | Gemini CLI |
+| v0.6 | Antigravity (parcial) |
 | v0.7 | Tema claro "Arcilla", barra lateral, atajo global, inglés en la interfaz, aviso de secretos, exportar a Markdown |
 | v1.0 | Todo lo anterior, estable |
 

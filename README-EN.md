@@ -118,11 +118,11 @@ Then, in a new session, ask something like *"search my conversations for where w
 | Version | Content |
 |---|---|
 | **v0.1** | Claude Code + Codex, CLI, MCP, window, health panel |
-| v0.2 | OpenCode |
-| v0.3 | Pi |
-| v0.4 | Gemini CLI |
-| v0.5 | Antigravity (partial) |
-| v0.6 | Official Claude.ai and ChatGPT exports: an import pipeline for the ZIP you request and download, so you can browse your whole archive (conversations, projects and attachments) in Nisaba, encrypted at rest with AES-256-GCM and a key derived from your password with Argon2id |
+| v0.2 | Official Claude.ai and ChatGPT exports: an import pipeline for the ZIP you request and download, so you can browse your whole archive (conversations, projects and attachments) in Nisaba, encrypted at rest with AES-256-GCM and a key derived from your password with Argon2id |
+| v0.3 | OpenCode |
+| v0.4 | Pi |
+| v0.5 | Gemini CLI |
+| v0.6 | Antigravity (partial) |
 | v0.7 | "Arcilla" light theme, sidebar, global shortcut, English UI, secrets warning, Markdown export |
 | v1.0 | All of the above, stable |
 
