@@ -154,11 +154,22 @@ struct Grupo {
 }
 
 pub fn buscar(conn: &Connection, entrada: &str, f: &Filtros, canal: &str) -> rusqlite::Result<Respuesta> {
+    contar_uso(conn, canal)?;
+    buscar_sin_contar(conn, entrada, f)
+}
+
+/// Suma una búsqueda al contador local del día para ese canal (spec §8).
+pub fn contar_uso(conn: &Connection, canal: &str) -> rusqlite::Result<()> {
     conn.execute(
         "INSERT INTO uso(dia, canal, busquedas) VALUES (date('now','localtime'), ?1, 1)
          ON CONFLICT(dia, canal) DO UPDATE SET busquedas = busquedas + 1",
         [canal],
     )?;
+    Ok(())
+}
+
+/// Como `buscar`, pero sin tocar el contador: la GUI busca mientras escribes y solo cuenta al abrir un resultado.
+pub fn buscar_sin_contar(conn: &Connection, entrada: &str, f: &Filtros) -> rusqlite::Result<Respuesta> {
     let Some(fts) = consulta_fts(entrada) else {
         return Ok(Respuesta { resultados: vec![], total_sesiones: 0, sugerencia: None });
     };

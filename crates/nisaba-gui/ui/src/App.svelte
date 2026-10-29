@@ -49,7 +49,11 @@
     temporizador = setTimeout(buscarAhora, 250);
     return () => clearTimeout(temporizador);
   });
-  function abrir(r: Resultado) { seleccionado = r.id_publico; alrededorDe = consulta.trim() ? r.orden_mensaje : undefined; mostrarSalud = false; }
+  function abrir(r: Resultado) {
+    seleccionado = r.id_publico; alrededorDe = consulta.trim() ? r.orden_mensaje : undefined; mostrarSalud = false;
+    // Una búsqueda cuenta para la métrica de éxito cuando abres lo que encontró, no a cada pausa al escribir.
+    if (consulta.trim()) void llamar('contar_busqueda').catch(e => { error = String(e); });
+  }
   function abrirId(id: string) { seleccionado = id; alrededorDe = undefined; mostrarSalud = false; }
   onMount(() => {
     let cerrado = false;
@@ -57,7 +61,7 @@
     if (!escritorio()) { estado = { estado: 'fallo', vistos: 0, total: 0, mensaje: textos.requiereApp }; return; }
     void (async () => {
       try {
-        const off = await escuchar<EstadoIndexacion>('indexacion', e => { estado = e; if (e.estado === 'hecho') { void buscarAhora(); void llamar<string[]>('proyectos').then(p => { if (!cerrado) proyectos = p; }).catch(e => { if (!cerrado) error = String(e); }); } });
+        const off = await escuchar<EstadoIndexacion>('indexacion', e => { estado = e; if (e.estado === 'hecho') { if (!respuesta.total_sesiones) void buscarAhora(); void llamar<string[]>('proyectos').then(p => { if (!cerrado) proyectos = p; }).catch(e => { if (!cerrado) error = String(e); }); } });
         if (cerrado) { off(); return; } cancelar.push(off);
         const abrirOff = await escuchar<string>('abrir-conversacion', abrirId);
         if (cerrado) { abrirOff(); return; } cancelar.push(abrirOff);

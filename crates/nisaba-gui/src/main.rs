@@ -48,6 +48,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             comandos::buscar,
             comandos::recientes,
+            comandos::contar_busqueda,
             comandos::leer,
             comandos::salud,
             comandos::proyectos,

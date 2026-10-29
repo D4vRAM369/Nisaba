@@ -37,7 +37,13 @@ pub fn buscar_en(rutas: &Rutas, consulta: &str, f: FiltrosGui) -> Result<Respues
     let filtros = filtros_core(f)?;
     let conn =
         nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
-    busqueda::buscar(&conn, consulta, &filtros, "gui").map_err(|e| e.to_string())
+    busqueda::buscar_sin_contar(&conn, consulta, &filtros).map_err(|e| e.to_string())
+}
+
+pub fn contar_busqueda_en(rutas: &Rutas) -> Result<(), String> {
+    let conn =
+        nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
+    busqueda::contar_uso(&conn, "gui").map_err(|e| e.to_string())
 }
 
 pub fn recientes_en(
@@ -117,6 +123,13 @@ pub async fn buscar(consulta: String, filtros: FiltrosGui) -> Result<Respuesta, 
 }
 
 #[tauri::command]
+pub async fn contar_busqueda() -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || contar_busqueda_en(&Rutas::desde_entorno()))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 pub async fn recientes(
     filtros: FiltrosGui,
     desplazamiento: Option<usize>,
@@ -191,19 +204,25 @@ mod tests {
         (d, rutas)
     }
     #[test]
-    fn buscar_devuelve_resultados() {
+    fn buscar_al_escribir_no_cuenta_y_abrir_un_resultado_si() {
         let (_d, rutas) = preparar();
-        let r = buscar_en(&rutas, "subtitulos", FiltrosGui::default()).unwrap();
-        assert_eq!(r.resultados.len(), 1);
-        let c = db::abrir(&rutas.home.join("tablilla.db")).unwrap();
-        let uso: i64 = c
-            .query_row(
-                "SELECT sum(busquedas) FROM uso WHERE canal='gui'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(uso, 1);
+        let uso = || -> i64 {
+            db::abrir(&rutas.home.join("tablilla.db"))
+                .unwrap()
+                .query_row(
+                    "SELECT coalesce(sum(busquedas),0) FROM uso WHERE canal='gui'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        for _ in 0..3 {
+            let r = buscar_en(&rutas, "subtitulos", FiltrosGui::default()).unwrap();
+            assert_eq!(r.resultados.len(), 1);
+        }
+        assert_eq!(uso(), 0);
+        contar_busqueda_en(&rutas).unwrap();
+        assert_eq!(uso(), 1);
     }
     #[test]
     fn leer_id_desconocido_es_error() {
