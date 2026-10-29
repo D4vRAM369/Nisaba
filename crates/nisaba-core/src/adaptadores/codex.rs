@@ -24,6 +24,15 @@ const PREFIJOS_OCULTOS: &[&str] = &[
     "<command-message>",
     "<send_user_message_",
     "[external unsupported",
+    // Vistos en datos reales (cientos de apariciones).
+    "<turn_aborted>",
+    "<recommended_plugins>",
+    "<subagent_notification>",
+    "<system-reminder>",
+    "<user_instructions>",
+    "<command-name>",
+    "This session is being continued",
+    "[Request interrupted",
 ];
 
 /// `rollout-*.jsonl` bajo `raiz/sessions` y `raiz/archived_sessions`, ordenados.
@@ -191,7 +200,23 @@ pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
                         ),
                         false,
                     ),
-                    "additional_tools" => continue,
+                    // Sin texto de conversación (catálogo de herramientas, resumen cifrado).
+                    "additional_tools" | "tool_search_call" | "tool_search_output"
+                    | "compaction" => continue,
+                    "web_search_call" => {
+                        let q = payload
+                            .pointer("/action/query")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        if q.is_empty() {
+                            continue;
+                        }
+                        (
+                            Rol::Asistente,
+                            parte(TipoParte::Herramienta, recortar(format!("web_search: {q}"))),
+                            false,
+                        )
+                    }
                     // Mensaje entre agentes: texto real, pero no lo escribió la persona.
                     "agent_message" => (
                         Rol::Asistente,
@@ -381,6 +406,52 @@ mod tests {
         assert_eq!(c.mensajes.len(), 1);
         assert!(c.mensajes[0].oculto);
         assert_eq!(c.mensajes[0].partes[0].contenido, "informe del subagente");
+    }
+
+    #[test]
+    fn mapea_web_search_e_ignora_items_sin_texto() {
+        let d = tempfile::tempdir().unwrap();
+        let ruta = d.path().join("rollout-x.jsonl");
+        let t = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"a\"}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"web_search_call\",\"action\":{\"type\":\"search\",\"query\":\"consulta inventada\"}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_call\",\"arguments\":{}}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"tool_search_output\",\"tools\":[]}}\n",
+            "{\"type\":\"response_item\",\"payload\":{\"type\":\"compaction\",\"encrypted_content\":\"xx\"}}\n",
+        );
+        std::fs::write(&ruta, t).unwrap();
+        let c = parsear(&ruta).unwrap();
+        assert!(c.avisos.is_empty(), "{:?}", c.avisos);
+        assert_eq!(c.mensajes.len(), 1);
+        assert_eq!(c.mensajes[0].partes[0].contenido, "web_search: consulta inventada");
+    }
+
+    #[test]
+    fn oculta_inyecciones_recurrentes() {
+        let d = tempfile::tempdir().unwrap();
+        let ruta = d.path().join("rollout-x.jsonl");
+        let mut t = String::from("{\"type\":\"session_meta\",\"payload\":{\"id\":\"a\"}}\n");
+        for inicio in [
+            "<turn_aborted>\nAviso inventado",
+            "<recommended_plugins>\nLista inventada",
+            "<subagent_notification>\n{}",
+            "<system-reminder>\nNota inventada",
+            "<user_instructions>\nReglas inventadas",
+            "<command-name>/compact</command-name>",
+            "This session is being continued from otra",
+            "[Request interrupted by user]",
+            "Texto normal de la persona",
+        ] {
+            t += &format!(
+                "{{\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"user\",\"content\":[{{\"type\":\"input_text\",\"text\":{}}}]}}}}\n",
+                serde_json::to_string(inicio).unwrap()
+            );
+        }
+        std::fs::write(&ruta, t).unwrap();
+        let c = parsear(&ruta).unwrap();
+        let visibles: Vec<_> = c.mensajes.iter().filter(|m| !m.oculto).collect();
+        assert_eq!(visibles.len(), 1);
+        assert_eq!(visibles[0].partes[0].contenido, "Texto normal de la persona");
     }
 
     #[test]

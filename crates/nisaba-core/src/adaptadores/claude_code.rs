@@ -36,6 +36,8 @@ const PREFIJOS_OCULTOS: &[&str] = &[
     "<task-notification>",
     "Base directory for this skill:",
     "Caveat:",
+    "[Request interrupted",
+    "This session is being continued",
 ];
 
 /// Todos los `*.jsonl` bajo `raiz` (incluidos `*/subagents/agent-*.jsonl`), ordenados.
@@ -231,7 +233,9 @@ pub fn parsear(ruta: &Path) -> Result<ConversacionParseada, String> {
                     });
                 mensajes.push(Mensaje {
                     uuid: texto(&v, "uuid"),
-                    id_padre: texto(&v, "parentUuid"),
+                    // `compact_boundary` corta la cadena (parentUuid null) pero
+                    // `logicalParentUuid` apunta a lo anterior a la compactación.
+                    id_padre: texto(&v, "parentUuid").or_else(|| texto(&v, "logicalParentUuid")),
                     rol,
                     modelo: v
                         .pointer("/message/model")
@@ -392,6 +396,26 @@ mod tests {
         assert_eq!(c.padre_original.as_deref(), Some(SESION));
         assert_eq!(c.descripcion.as_deref(), Some("Revisión final"));
         assert_eq!(c.mensajes.len(), 2);
+    }
+
+    #[test]
+    fn oculta_interrupciones_y_continuaciones() {
+        let d = tempfile::tempdir().unwrap();
+        let ruta = d.path().join("s.jsonl");
+        let u = |n: u8, c: &str| {
+            format!(r#"{{"type":"user","uuid":"u{n}","sessionId":"s","message":{{"role":"user","content":"{c}"}}}}"#)
+        };
+        let t = [
+            u(1, "[Request interrupted by user]"),
+            u(2, "This session is being continued from una anterior"),
+            u(3, "Pregunta normal"),
+        ]
+        .join("\n");
+        std::fs::write(&ruta, t).unwrap();
+        let c = parsear(&ruta).unwrap();
+        let visibles: Vec<_> = c.mensajes.iter().filter(|m| !m.oculto).collect();
+        assert_eq!(visibles.len(), 1);
+        assert_eq!(visibles[0].partes[0].contenido, "Pregunta normal");
     }
 
     #[test]

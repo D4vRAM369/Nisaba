@@ -149,3 +149,35 @@ fn padre_ausente_no_trunca() {
     let l = leer(&e.conn, cid, &Tramo::default()).unwrap();
     assert_eq!(l.total, 4, "{:#?}", l.bloques);
 }
+
+#[test]
+fn rama_cruza_la_compactacion() {
+    // Tras /compact, `compact_boundary` tiene parentUuid null pero logicalParentUuid
+    // apunta al último mensaje anterior: la rama debe incluir lo previo.
+    let dir = tempfile::tempdir().unwrap();
+    let claude = dir.path().join("claude");
+    let codex = dir.path().join("codex");
+    std::fs::create_dir_all(claude.join("-home-u-P")).unwrap();
+    std::fs::create_dir_all(&codex).unwrap();
+    let l = |t: &str, u: &str, p: &str, extra: &str, c: &str| {
+        format!(
+            r#"{{"type":"{t}","uuid":"{u}","parentUuid":{p},"sessionId":"s",{extra}"message":{{"role":"{t}","content":"{c}"}}}}"#
+        )
+    };
+    let lineas = [
+        l("user", "u1", "null", "", "pregunta anterior a compactar"),
+        l("assistant", "a1", "\"u1\"", "", "respuesta anterior a compactar"),
+        r#"{"type":"system","subtype":"compact_boundary","uuid":"cb","parentUuid":null,"logicalParentUuid":"a1","sessionId":"s","content":"Conversation compacted"}"#.to_string(),
+        l("user", "u2", "\"cb\"", "", "pregunta posterior"),
+        l("assistant", "a2", "\"u2\"", "", "respuesta posterior"),
+        r#"{"type":"last-prompt","lastPrompt":"x","leafUuid":"a2","sessionId":"s"}"#.to_string(),
+    ];
+    std::fs::write(claude.join("-home-u-P/zzzz0001.jsonl"), lineas.join("\n") + "\n").unwrap();
+    let home = dir.path().join("home");
+    let mut conn = db::abrir(&home.join("tablilla.db")).unwrap();
+    indexar(&mut conn, &Rutas { home, claude, codex }, &mut |_| {});
+    let id = resolver_id(&conn, "cc-zzzz0001").unwrap().unwrap();
+    let md = a_markdown(&leer(&conn, id, &Tramo { cantidad: 100, ..Default::default() }).unwrap());
+    assert!(md.contains("respuesta anterior a compactar"), "{md}");
+    assert!(md.contains("respuesta posterior"), "{md}");
+}
