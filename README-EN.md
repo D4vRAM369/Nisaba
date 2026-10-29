@@ -1,6 +1,6 @@
 <div align="center">
 
-# 𒀭𒉀 NISABA
+<img src="banner.png" alt="NISABA: the Sumerian goddess of writing inscribes a clay tablet among ears of barley, in gold on lapis lazuli" width="100%">
 
 **The local vault for your conversations with AIs.**
 Find what you discussed with Claude Code or Codex by word or phrase, and reread it without the noise.

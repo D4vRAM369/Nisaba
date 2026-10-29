@@ -1,6 +1,6 @@
 <div align="center">
 
-# 𒀭𒉀 NISABA
+<img src="banner.png" alt="NISABA: la diosa sumeria de la escritura graba una tablilla de arcilla entre espigas, en oro sobre lapislázuli" width="100%">
 
 **La bóveda local de tus conversaciones con IAs.**
 Encuentra por palabra o frase lo que hablaste con Claude Code o Codex, y reléelo sin ruido.
