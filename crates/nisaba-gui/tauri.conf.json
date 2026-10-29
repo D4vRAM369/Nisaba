@@ -3,7 +3,7 @@
   "productName": "Nisaba",
   "mainBinaryName": "nisaba-gui",
   "version": "0.1.0",
-  "identifier": "dev.d4vram.nisaba",
+  "identifier": "io.github.d4vram369.Nisaba",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",

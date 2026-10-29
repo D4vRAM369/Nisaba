@@ -97,7 +97,7 @@ jobs:
       - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
         with:
           bundle: Nisaba_x86_64.flatpak
-          manifest-path: flatpak/dev.d4vram.nisaba.yml
+          manifest-path: flatpak/io.github.d4vram369.Nisaba.yml
           upload-artifact: true
 
   subir-flatpak:

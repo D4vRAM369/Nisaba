@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="banner.png" alt="NISABA: la diosa sumeria de la escritura graba una tablilla de arcilla entre espigas, en oro sobre lapislázuli" width="100%">
+<img src="banner.jpg" alt="NISABA: la diosa sumeria de la escritura graba una tablilla de arcilla entre espigas, en oro sobre lapislázuli" width="100%">
 
 **La bóveda local de tus conversaciones con IAs.**
 Encuentra por palabra o frase lo que hablaste con Claude Code o Codex, y reléelo sin ruido.
@@ -80,7 +80,7 @@ nisaba salud                            # estado de cada fuente
 nisaba uso                              # búsquedas por día y canal
 ```
 
-En Flatpak, antepón `flatpak run --command=nisaba dev.d4vram.nisaba` (por ejemplo, `flatpak run --command=nisaba dev.d4vram.nisaba buscar "algo"`).
+En Flatpak, antepón `flatpak run --command=nisaba io.github.d4vram369.Nisaba` (por ejemplo, `flatpak run --command=nisaba io.github.d4vram369.Nisaba buscar "algo"`).
 
 ### Desde tu IA (MCP)
 
@@ -93,7 +93,7 @@ claude mcp add --scope user nisaba -- nisaba mcp
 Con Flatpak:
 
 ```bash
-claude mcp add --scope user nisaba -- flatpak run --command=nisaba dev.d4vram.nisaba mcp
+claude mcp add --scope user nisaba -- flatpak run --command=nisaba io.github.d4vram369.Nisaba mcp
 ```
 
 Después, en una sesión nueva, pídele algo como *"busca en mis conversaciones dónde decidimos usar FTS5"*.

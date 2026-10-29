@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="banner.png" alt="NISABA: the Sumerian goddess of writing inscribes a clay tablet among ears of barley, in gold on lapis lazuli" width="100%">
+<img src="banner.jpg" alt="NISABA: the Sumerian goddess of writing inscribes a clay tablet among ears of barley, in gold on lapis lazuli" width="100%">
 
 **The local vault for your conversations with AIs.**
 Find what you discussed with Claude Code or Codex by word or phrase, and reread it without the noise.
@@ -82,7 +82,7 @@ nisaba salud                            # health of each source
 nisaba uso                              # searches per day and channel
 ```
 
-With Flatpak, prefix `flatpak run --command=nisaba dev.d4vram.nisaba` (for example, `flatpak run --command=nisaba dev.d4vram.nisaba buscar "something"`).
+With Flatpak, prefix `flatpak run --command=nisaba io.github.d4vram369.Nisaba` (for example, `flatpak run --command=nisaba io.github.d4vram369.Nisaba buscar "something"`).
 
 ### From your AI (MCP)
 
@@ -95,7 +95,7 @@ claude mcp add --scope user nisaba -- nisaba mcp
 With Flatpak:
 
 ```bash
-claude mcp add --scope user nisaba -- flatpak run --command=nisaba dev.d4vram.nisaba mcp
+claude mcp add --scope user nisaba -- flatpak run --command=nisaba io.github.d4vram369.Nisaba mcp
 ```
 
 Then, in a new session, ask something like *"search my conversations for where we decided to use FTS5"*.

@@ -13,3 +13,4 @@ flatpak/.flatpak-builder/
 # Documentación interna: solo local, nunca en Git
 docs/
 HANDOFF.md
+AGENTS.md
