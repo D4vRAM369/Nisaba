@@ -1,6 +1,6 @@
-use serde::Serialize;
 use crate::modelo::Fuente;
 use rusqlite::Connection;
+use serde::Serialize;
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -29,14 +29,23 @@ pub fn informe(conn: &Connection) -> rusqlite::Result<Vec<FilaSalud>> {
              WHERE fuente = ?1 AND estado = 'error' ORDER BY ruta",
         )?;
         let errores = st
-            .query_map([f], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
+            .query_map([f], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+            })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let ultima: Option<String> = conn.query_row(
             "SELECT MAX(fin) FROM conversaciones WHERE fuente = ?1",
             [f],
             |r| r.get(0),
         )?;
-        filas.push(FilaSalud { fuente, ultima, vistos, parseados, errores, avisos });
+        filas.push(FilaSalud {
+            fuente,
+            ultima,
+            vistos,
+            parseados,
+            errores,
+            avisos,
+        });
     }
     Ok(filas)
 }

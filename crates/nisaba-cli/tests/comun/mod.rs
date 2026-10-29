@@ -35,7 +35,10 @@ impl Ctx {
             .env("NISABA_HOME", self.dir.path().join("home"))
             .env("NISABA_CLAUDE_DIR", self.dir.path().join("claude"))
             .env("NISABA_CODEX_DIR", self.dir.path().join("codex"))
-            .env("NISABA_CLAUDE_SETTINGS", self.dir.path().join("settings.json"));
+            .env(
+                "NISABA_CLAUDE_SETTINGS",
+                self.dir.path().join("settings.json"),
+            );
         c
     }
 
@@ -45,10 +48,11 @@ impl Ctx {
             .env("NISABA_HOME", self.dir.path().join("home"))
             .env("NISABA_CLAUDE_DIR", self.dir.path().join("claude"))
             .env("NISABA_CODEX_DIR", self.dir.path().join("codex"))
-            .env("NISABA_CLAUDE_SETTINGS", self.dir.path().join("settings.json"))
+            .env(
+                "NISABA_CLAUDE_SETTINGS",
+                self.dir.path().join("settings.json"),
+            )
             .output()
             .unwrap()
     }
 }
-
-

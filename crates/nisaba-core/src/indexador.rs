@@ -18,7 +18,11 @@ pub struct Rutas {
 
 impl Rutas {
     pub fn desde_entorno() -> Rutas {
-        Rutas { home: nisaba_home(), claude: dir_claude(), codex: dir_codex() }
+        Rutas {
+            home: nisaba_home(),
+            claude: dir_claude(),
+            codex: dir_codex(),
+        }
     }
 }
 
@@ -30,7 +34,11 @@ pub struct Progreso {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResultadoIndexado {
-    Hecho { nuevos: usize, cambiados: usize, errores: usize },
+    Hecho {
+        nuevos: usize,
+        cambiados: usize,
+        errores: usize,
+    },
     /// Otro proceso está indexando (el bloqueo está tomado).
     Ocupado,
     /// Fallo real de E/S al preparar la pasada (carpeta o bloqueo).
@@ -46,7 +54,12 @@ struct Candidato {
 
 fn mtime_segs(ruta: &Path) -> Option<(i64, i64)> {
     let m = fs::metadata(ruta).ok()?;
-    let t = m.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+    let t = m
+        .modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
     Some((m.len() as i64, t))
 }
 
@@ -126,7 +139,9 @@ fn escribir(
     if let Some((_, _, Some(otra))) = &previo {
         if *otra != ruta_txt {
             let mt_otra: Option<i64> = conn
-                .query_row("SELECT mtime FROM archivos WHERE ruta=?1", [otra], |f| f.get(0))
+                .query_row("SELECT mtime FROM archivos WHERE ruta=?1", [otra], |f| {
+                    f.get(0)
+                })
                 .optional()?
                 .flatten();
             if mt_otra.is_some_and(|m| m >= c.mtime) {
@@ -201,7 +216,14 @@ fn escribir(
         )?;
         for (i, m) in conv.mensajes.iter().enumerate() {
             ins_m.execute(params![
-                id, i as i64, m.uuid, m.id_padre, m.rol.as_str(), m.modelo, m.hora, m.oculto as i64
+                id,
+                i as i64,
+                m.uuid,
+                m.id_padre,
+                m.rol.as_str(),
+                m.modelo,
+                m.hora,
+                m.oculto as i64
             ])?;
             let mid = tx.last_insert_rowid();
             for (j, p) in m.partes.iter().enumerate() {
@@ -215,7 +237,11 @@ fn escribir(
             pendientes.push((id, conv.fuente, p.clone()));
         }
     }
-    Ok(if previo.is_some() { Escrito::Cambiado } else { Escrito::Nuevo })
+    Ok(if previo.is_some() {
+        Escrito::Cambiado
+    } else {
+        Escrito::Nuevo
+    })
 }
 
 /// Segundos Unix → `AAAAMMDDTHHMMSSZ` (UTC, calendario civil).
@@ -230,7 +256,12 @@ fn marca_utc(segs: u64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = yoe + era * 400 + i64::from(m <= 2);
-    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", resto / 3_600, resto % 3_600 / 60, resto % 60)
+    format!(
+        "{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z",
+        resto / 3_600,
+        resto % 3_600 / 60,
+        resto % 60
+    )
 }
 
 fn destino_copia(rutas: &Rutas, fuente: Fuente, origen: &Path) -> Result<PathBuf, String> {
@@ -265,7 +296,9 @@ fn copiar_original_con_marca(
     let mut destino = destino_copia(rutas, fuente, origen)?;
     let dir = destino.parent().ok_or("ruta sin carpeta")?.to_path_buf();
     fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let tam_origen = fs::metadata(origen).map_err(|e| format!("{}: {e}", origen.display()))?.len();
+    let tam_origen = fs::metadata(origen)
+        .map_err(|e| format!("{}: {e}", origen.display()))?
+        .len();
     let encogido = fs::metadata(&destino).is_ok_and(|m| m.len() > tam_origen);
     if encogido {
         let mut nombre = destino.file_name().ok_or("ruta sin nombre")?.to_os_string();
@@ -333,7 +366,12 @@ pub fn indexar(
     for (fuente, rutas_f) in fuentes {
         for ruta in rutas_f {
             if let Some((tamano, mtime)) = mtime_segs(&ruta) {
-                candidatos.push(Candidato { fuente, ruta, tamano, mtime });
+                candidatos.push(Candidato {
+                    fuente,
+                    ruta,
+                    tamano,
+                    mtime,
+                });
             }
         }
     }
@@ -345,7 +383,8 @@ pub fn indexar(
     let mut ultimo = Instant::now();
     let mut vistos_tamano: HashMap<String, (i64, i64)> = HashMap::new();
     if let Ok(mut st) = conn.prepare("SELECT ruta, tamano, mtime FROM archivos") {
-        if let Ok(filas) = st.query_map([], |f| Ok((f.get::<_, String>(0)?, f.get(1)?, f.get(2)?))) {
+        if let Ok(filas) = st.query_map([], |f| Ok((f.get::<_, String>(0)?, f.get(1)?, f.get(2)?)))
+        {
             for (r, t, m) in filas.flatten() {
                 vistos_tamano.insert(r, (t, m));
             }
@@ -392,7 +431,8 @@ pub fn indexar(
                                     None => f.clone(),
                                 };
                                 errores += 1;
-                                let _ = marcar(conn, c, "error", Some(&msg), conv.avisos.len(), false);
+                                let _ =
+                                    marcar(conn, c, "error", Some(&msg), conv.avisos.len(), false);
                             }
                             (None, Some(e)) => {
                                 errores += 1;
@@ -405,13 +445,23 @@ pub fn indexar(
                     }
                     Err(e) => {
                         errores += 1;
-                        let _ = marcar(conn, c, "error", Some(&format!("base de datos: {e}")), 0, firma);
+                        let _ = marcar(
+                            conn,
+                            c,
+                            "error",
+                            Some(&format!("base de datos: {e}")),
+                            0,
+                            firma,
+                        );
                     }
                 },
             }
         }
         if ultimo.elapsed() >= Duration::from_millis(500) {
-            progreso(Progreso { vistos: i + 1, total });
+            progreso(Progreso {
+                vistos: i + 1,
+                total,
+            });
             ultimo = Instant::now();
         }
     }
@@ -446,9 +496,16 @@ pub fn indexar(
             params![fuente.as_str(), padre, id],
         );
     }
-    progreso(Progreso { vistos: total, total });
+    progreso(Progreso {
+        vistos: total,
+        total,
+    });
     drop(lock);
-    ResultadoIndexado::Hecho { nuevos, cambiados, errores }
+    ResultadoIndexado::Hecho {
+        nuevos,
+        cambiados,
+        errores,
+    }
 }
 
 fn parsear(c: &Candidato) -> Result<ConversacionParseada, String> {
@@ -477,7 +534,10 @@ mod pruebas {
             super::copiar_original_con_marca(&rutas, fuente, &origen, marca).unwrap();
         }
         let destino = super::destino_copia(&rutas, fuente, &origen).unwrap();
-        assert_eq!(std::fs::read_to_string(&destino).unwrap(), "original completo");
+        assert_eq!(
+            std::fs::read_to_string(&destino).unwrap(),
+            "original completo"
+        );
         let mut versiones: Vec<_> = std::fs::read_dir(destino.parent().unwrap())
             .unwrap()
             .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())

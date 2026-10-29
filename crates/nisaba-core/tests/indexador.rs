@@ -25,27 +25,67 @@ fn ruta_principal(e: &Entorno) -> PathBuf {
 fn indexa_fixtures() {
     let mut e = entorno();
     let r = correr(&mut e);
-    assert!(matches!(r, ResultadoIndexado::Hecho { nuevos: 3, errores: 1, .. }), "{r:?}");
+    assert!(
+        matches!(
+            r,
+            ResultadoIndexado::Hecho {
+                nuevos: 3,
+                errores: 1,
+                ..
+            }
+        ),
+        "{r:?}"
+    );
     assert_eq!(contar(&e.conn, "SELECT count(*) FROM conversaciones"), 3);
-    assert_eq!(contar(&e.conn, "SELECT count(*) FROM conversaciones WHERE fuente='codex'"), 1);
-    assert_eq!(contar(&e.conn, "SELECT count(*) FROM archivos WHERE estado='error'"), 1);
+    assert_eq!(
+        contar(
+            &e.conn,
+            "SELECT count(*) FROM conversaciones WHERE fuente='codex'"
+        ),
+        1
+    );
+    assert_eq!(
+        contar(
+            &e.conn,
+            "SELECT count(*) FROM archivos WHERE estado='error'"
+        ),
+        1
+    );
     let ok: i64 = contar(&e.conn, "SELECT count(*) FROM archivos WHERE estado='ok'");
     assert_eq!(ok, 4); // principal, subagente, 2 codex
     let (padre, id_principal): (Option<i64>, i64) = (
         e.conn
-            .query_row("SELECT padre_id FROM conversaciones WHERE id_original='agent-zz'", [], |f| f.get(0))
+            .query_row(
+                "SELECT padre_id FROM conversaciones WHERE id_original='agent-zz'",
+                [],
+                |f| f.get(0),
+            )
             .unwrap(),
         e.conn
-            .query_row("SELECT id FROM conversaciones WHERE id_original=?1", [PRINCIPAL], |f| f.get(0))
+            .query_row(
+                "SELECT id FROM conversaciones WHERE id_original=?1",
+                [PRINCIPAL],
+                |f| f.get(0),
+            )
             .unwrap(),
     );
     assert_eq!(padre, Some(id_principal));
     let proyecto: String = e
         .conn
-        .query_row("SELECT proyecto FROM conversaciones WHERE id_original=?1", [PRINCIPAL], |f| f.get(0))
+        .query_row(
+            "SELECT proyecto FROM conversaciones WHERE id_original=?1",
+            [PRINCIPAL],
+            |f| f.get(0),
+        )
         .unwrap();
     assert_eq!(proyecto, "Demo");
-    assert!(e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl")).exists());
+    assert!(e
+        .rutas
+        .home
+        .join(format!(
+            "copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl"
+        ))
+        .exists());
 }
 
 #[test]
@@ -53,7 +93,17 @@ fn segunda_pasada_no_reescribe() {
     let mut e = entorno();
     correr(&mut e);
     let r = correr(&mut e);
-    assert!(matches!(r, ResultadoIndexado::Hecho { nuevos: 0, cambiados: 0, .. }), "{r:?}");
+    assert!(
+        matches!(
+            r,
+            ResultadoIndexado::Hecho {
+                nuevos: 0,
+                cambiados: 0,
+                ..
+            }
+        ),
+        "{r:?}"
+    );
 }
 
 #[test]
@@ -62,20 +112,44 @@ fn archivo_crece_se_actualiza_con_id_estable() {
     correr(&mut e);
     let sql = "SELECT id FROM conversaciones WHERE id_original=?1";
     let id1: i64 = e.conn.query_row(sql, [PRINCIPAL], |f| f.get(0)).unwrap();
-    let n1 = contar(&e.conn, &format!("SELECT count(*) FROM mensajes WHERE conversacion_id={id1}"));
+    let n1 = contar(
+        &e.conn,
+        &format!("SELECT count(*) FROM mensajes WHERE conversacion_id={id1}"),
+    );
     let ruta = ruta_principal(&e);
     let original = fs::read_to_string(&ruta).unwrap();
     // El fixture acaba en una línea cortada (escritura en curso): se descarta y se añade una completa.
-    let mut s = original.trim_end_matches('\n')[..original.trim_end_matches('\n').rfind('\n').unwrap() + 1].to_string();
+    let mut s = original.trim_end_matches('\n')
+        [..original.trim_end_matches('\n').rfind('\n').unwrap() + 1]
+        .to_string();
     s.push_str(&format!("{{\"type\":\"user\",\"uuid\":\"u99\",\"parentUuid\":\"a2\",\"sessionId\":\"{PRINCIPAL}\",\"cwd\":\"/home/u/Proyectos/Demo\",\"timestamp\":\"2026-10-29T10:00:00.000Z\",\"message\":{{\"role\":\"user\",\"content\":\"Una pregunta nueva sobre el esquema\"}}}}\n"));
     fs::write(&ruta, s).unwrap();
     let r = correr(&mut e);
-    assert!(matches!(r, ResultadoIndexado::Hecho { nuevos: 0, cambiados: 1, .. }), "{r:?}");
+    assert!(
+        matches!(
+            r,
+            ResultadoIndexado::Hecho {
+                nuevos: 0,
+                cambiados: 1,
+                ..
+            }
+        ),
+        "{r:?}"
+    );
     let id2: i64 = e.conn.query_row(sql, [PRINCIPAL], |f| f.get(0)).unwrap();
     assert_eq!(id1, id2);
-    let n2 = contar(&e.conn, &format!("SELECT count(*) FROM mensajes WHERE conversacion_id={id2}"));
+    let n2 = contar(
+        &e.conn,
+        &format!("SELECT count(*) FROM mensajes WHERE conversacion_id={id2}"),
+    );
     assert_eq!(n2, n1 + 1);
-    assert_eq!(contar(&e.conn, "SELECT count(*) FROM partes_fts WHERE partes_fts MATCH 'esquema'"), 1);
+    assert_eq!(
+        contar(
+            &e.conn,
+            "SELECT count(*) FROM partes_fts WHERE partes_fts MATCH 'esquema'"
+        ),
+        1
+    );
 }
 
 #[test]
@@ -88,10 +162,19 @@ fn fuente_borrada_se_conserva() {
     assert!(matches!(r, ResultadoIndexado::Hecho { .. }));
     assert_eq!(contar(&e.conn, "SELECT count(*) FROM mensajes"), antes);
     assert_eq!(
-        contar(&e.conn, &format!("SELECT count(*) FROM conversaciones WHERE id_original='{PRINCIPAL}'")),
+        contar(
+            &e.conn,
+            &format!("SELECT count(*) FROM conversaciones WHERE id_original='{PRINCIPAL}'")
+        ),
         1
     );
-    assert!(e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl")).exists());
+    assert!(e
+        .rutas
+        .home
+        .join(format!(
+            "copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl"
+        ))
+        .exists());
 }
 
 #[test]
@@ -118,7 +201,10 @@ fn error_conserva_conversacion_anterior() {
     let ruta = ruta_principal(&e);
     fs::write(&ruta, "{esto no es json\n{\"type\":\"user\"}\n").unwrap();
     let r = correr(&mut e);
-    assert!(matches!(r, ResultadoIndexado::Hecho { errores: 1, .. }), "{r:?}");
+    assert!(
+        matches!(r, ResultadoIndexado::Hecho { errores: 1, .. }),
+        "{r:?}"
+    );
     assert!(contar(&e.conn, &format!("SELECT count(*) FROM mensajes m JOIN conversaciones c ON c.id=m.conversacion_id WHERE c.id_original='{PRINCIPAL}'")) > 0);
 }
 
@@ -130,13 +216,20 @@ fn usuario(texto: &str) -> Mensaje {
         modelo: None,
         hora: None,
         oculto: false,
-        partes: vec![Parte { tipo: TipoParte::Texto, contenido: texto.into() }],
+        partes: vec![Parte {
+            tipo: TipoParte::Texto,
+            contenido: texto.into(),
+        }],
     }
 }
 
 #[test]
 fn titulo_salta_genericos() {
-    let ms = vec![usuario("continúa"), usuario("/compact"), usuario("Arregla el parseo de subtítulos en Mirlo")];
+    let ms = vec![
+        usuario("continúa"),
+        usuario("/compact"),
+        usuario("Arregla el parseo de subtítulos en Mirlo"),
+    ];
     assert_eq!(
         titulo_util(Some("Mirlo"), &ms),
         "Mirlo · Arregla el parseo de subtítulos en Mirlo"
@@ -151,21 +244,44 @@ fn copia_fallida_se_reintenta() {
     fs::create_dir_all(e.rutas.home.join("copias")).unwrap();
     fs::write(e.rutas.home.join("copias/claude-code"), "obstáculo").unwrap();
     let r = correr(&mut e);
-    assert!(matches!(r, ResultadoIndexado::Hecho { errores, .. } if errores >= 1), "{r:?}");
+    assert!(
+        matches!(r, ResultadoIndexado::Hecho { errores, .. } if errores >= 1),
+        "{r:?}"
+    );
     let estado: String = e
         .conn
-        .query_row("SELECT estado FROM archivos WHERE ruta=?1", [ruta_principal(&e).to_string_lossy()], |f| f.get(0))
+        .query_row(
+            "SELECT estado FROM archivos WHERE ruta=?1",
+            [ruta_principal(&e).to_string_lossy()],
+            |f| f.get(0),
+        )
         .unwrap();
     assert_eq!(estado, "error");
     let msg: String = e
         .conn
-        .query_row("SELECT error FROM archivos WHERE ruta=?1", [ruta_principal(&e).to_string_lossy()], |f| f.get(0))
+        .query_row(
+            "SELECT error FROM archivos WHERE ruta=?1",
+            [ruta_principal(&e).to_string_lossy()],
+            |f| f.get(0),
+        )
         .unwrap();
     assert!(msg.starts_with("copia: "), "{msg}");
     fs::remove_file(e.rutas.home.join("copias/claude-code")).unwrap();
     correr(&mut e);
-    assert!(e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl")).exists());
-    assert!(e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}/subagents/agent-zz.jsonl")).exists());
+    assert!(e
+        .rutas
+        .home
+        .join(format!(
+            "copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl"
+        ))
+        .exists());
+    assert!(e
+        .rutas
+        .home
+        .join(format!(
+            "copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}/subagents/agent-zz.jsonl"
+        ))
+        .exists());
 }
 
 #[test]
@@ -199,16 +315,37 @@ fn codex_jsonl_y_zst_de_la_misma_sesion_no_hacen_vaivén() {
     let plano = rollout("mismo-id", "conversación inventada");
     let dir = e.rutas.codex.join("sessions/2026/10/01");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("rollout-2026-10-01T10-00-00-mismo-id.jsonl"), &plano).unwrap();
-    let zst = ruzstd::encoding::compress_to_vec(plano.as_bytes(), ruzstd::encoding::CompressionLevel::Fastest);
-    std::fs::write(dir.join("rollout-2026-10-01T10-00-00-mismo-id.jsonl.zst"), zst).unwrap();
+    std::fs::write(
+        dir.join("rollout-2026-10-01T10-00-00-mismo-id.jsonl"),
+        &plano,
+    )
+    .unwrap();
+    let zst = ruzstd::encoding::compress_to_vec(
+        plano.as_bytes(),
+        ruzstd::encoding::CompressionLevel::Fastest,
+    );
+    std::fs::write(
+        dir.join("rollout-2026-10-01T10-00-00-mismo-id.jsonl.zst"),
+        zst,
+    )
+    .unwrap();
 
     let r1 = correr(&mut e);
-    assert!(matches!(r1, ResultadoIndexado::Hecho { errores: 0, .. }), "{r1:?}");
-    let n: i64 = e.conn.query_row("SELECT count(*) FROM conversaciones", [], |f| f.get(0)).unwrap();
+    assert!(
+        matches!(r1, ResultadoIndexado::Hecho { errores: 0, .. }),
+        "{r1:?}"
+    );
+    let n: i64 = e
+        .conn
+        .query_row("SELECT count(*) FROM conversaciones", [], |f| f.get(0))
+        .unwrap();
     assert_eq!(n, 1);
     match correr(&mut e) {
-        ResultadoIndexado::Hecho { nuevos, cambiados, errores } => {
+        ResultadoIndexado::Hecho {
+            nuevos,
+            cambiados,
+            errores,
+        } => {
             assert_eq!((nuevos, cambiados, errores), (0, 0, 0));
         }
         o => panic!("{o:?}"),
@@ -220,14 +357,20 @@ fn zst_corrupto_es_error_en_archivos_sin_panico() {
     let mut e = entorno_vacio();
     let dir = e.rutas.codex.join("sessions/2026/10/01");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("rollout-2026-10-01T10-00-00-roto.jsonl.zst"), b"esto no es zstd").unwrap();
+    std::fs::write(
+        dir.join("rollout-2026-10-01T10-00-00-roto.jsonl.zst"),
+        b"esto no es zstd",
+    )
+    .unwrap();
     match correr(&mut e) {
         ResultadoIndexado::Hecho { errores, .. } => assert_eq!(errores, 1),
         o => panic!("{o:?}"),
     }
     let (estado, err): (String, Option<String>) = e
         .conn
-        .query_row("SELECT estado, error FROM archivos", [], |f| Ok((f.get(0)?, f.get(1)?)))
+        .query_row("SELECT estado, error FROM archivos", [], |f| {
+            Ok((f.get(0)?, f.get(1)?))
+        })
         .unwrap();
     assert_eq!(estado, "error");
     assert!(err.unwrap().contains("zstd"));
@@ -242,11 +385,14 @@ fn n_mensajes(e: &Entorno) -> i64 {
 
 fn fijar_mtime(ruta: &std::path::Path, segs: u64) {
     let f = fs::OpenOptions::new().write(true).open(ruta).unwrap();
-    f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(segs)).unwrap();
+    f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(segs))
+        .unwrap();
 }
 
 fn copia_principal(e: &Entorno) -> PathBuf {
-    e.rutas.home.join(format!("copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl"))
+    e.rutas.home.join(format!(
+        "copias/claude-code/-home-u-Proyectos-Demo/{PRINCIPAL}.jsonl"
+    ))
 }
 
 /// Trunca el original a sus 3 primeras líneas, con otra fecha de modificación.
@@ -264,8 +410,12 @@ fn codex_se_copia() {
     let mut e = entorno();
     correr(&mut e);
     let h = &e.rutas.home;
-    assert!(h.join("copias/codex/sessions/2026/10/01/rollout-2026-10-01T10-00-00-cx01.jsonl").exists());
-    assert!(h.join("copias/codex/archived_sessions/rollout-2026-10-01T10-00-00-cx01.jsonl").exists());
+    assert!(h
+        .join("copias/codex/sessions/2026/10/01/rollout-2026-10-01T10-00-00-cx01.jsonl")
+        .exists());
+    assert!(h
+        .join("copias/codex/archived_sessions/rollout-2026-10-01T10-00-00-cx01.jsonl")
+        .exists());
 }
 
 #[test]
@@ -282,7 +432,11 @@ fn original_encogido_no_pisa_copia() {
     let al_lado: Vec<_> = fs::read_dir(dir)
         .unwrap()
         .flatten()
-        .filter(|f| f.file_name().to_string_lossy().starts_with(&format!("{PRINCIPAL}.jsonl.encogido-")))
+        .filter(|f| {
+            f.file_name()
+                .to_string_lossy()
+                .starts_with(&format!("{PRINCIPAL}.jsonl.encogido-"))
+        })
         .collect();
     assert_eq!(al_lado.len(), 1);
     assert_eq!(fs::read_to_string(al_lado[0].path()).unwrap(), corto);
@@ -295,7 +449,10 @@ fn conversacion_encogida_se_conserva() {
     let antes = n_mensajes(&e);
     truncar(&e);
     let r = correr(&mut e);
-    assert!(matches!(r, ResultadoIndexado::Hecho { errores: 1, .. }), "{r:?}");
+    assert!(
+        matches!(r, ResultadoIndexado::Hecho { errores: 1, .. }),
+        "{r:?}"
+    );
     assert_eq!(n_mensajes(&e), antes);
     let (estado, err): (String, String) = e
         .conn
@@ -309,7 +466,11 @@ fn conversacion_encogida_se_conserva() {
     assert!(err.starts_with("encogió: "), "{err}");
     assert!(err.contains("la versión anterior se conserva"), "{err}");
     match correr(&mut e) {
-        ResultadoIndexado::Hecho { nuevos, cambiados, errores } => assert_eq!((nuevos, cambiados, errores), (0, 0, 0)),
+        ResultadoIndexado::Hecho {
+            nuevos,
+            cambiados,
+            errores,
+        } => assert_eq!((nuevos, cambiados, errores), (0, 0, 0)),
         o => panic!("{o:?}"),
     }
 }
@@ -323,7 +484,8 @@ fn vuelve_a_crecer_se_acepta() {
     let original = fs::read_to_string(&ruta).unwrap();
     truncar(&e);
     correr(&mut e);
-    let sin_cortada = &original.trim_end_matches('\n')[..original.trim_end_matches('\n').rfind('\n').unwrap() + 1];
+    let sin_cortada = &original.trim_end_matches('\n')
+        [..original.trim_end_matches('\n').rfind('\n').unwrap() + 1];
     let mut s = sin_cortada.to_string();
     s.push_str(&format!("{{\"type\":\"user\",\"uuid\":\"u99\",\"parentUuid\":\"a2\",\"sessionId\":\"{PRINCIPAL}\",\"cwd\":\"/home/u/Proyectos/Demo\",\"timestamp\":\"2026-10-29T10:00:00.000Z\",\"message\":{{\"role\":\"user\",\"content\":\"Una pregunta nueva sobre el esquema\"}}}}\n"));
     fs::write(&ruta, s).unwrap();
@@ -332,7 +494,11 @@ fn vuelve_a_crecer_se_acepta() {
     assert_eq!(n_mensajes(&e), antes + 1);
     let estado: String = e
         .conn
-        .query_row("SELECT estado FROM archivos WHERE ruta=?1", [ruta.to_string_lossy()], |f| f.get(0))
+        .query_row(
+            "SELECT estado FROM archivos WHERE ruta=?1",
+            [ruta.to_string_lossy()],
+            |f| f.get(0),
+        )
         .unwrap();
     assert_eq!(estado, "ok");
 }
@@ -346,23 +512,41 @@ fn subagente_se_enlaza_si_padre_llega_en_otra_pasada() {
         fs::remove_file(&padre).unwrap();
         correr(&mut e);
         let padre_id = |e: &Entorno| -> Option<i64> {
-            e.conn.query_row(
-                "SELECT padre_id FROM conversaciones WHERE id_original='agent-zz'",
-                [], |f| f.get(0),
-            ).unwrap()
+            e.conn
+                .query_row(
+                    "SELECT padre_id FROM conversaciones WHERE id_original='agent-zz'",
+                    [],
+                    |f| f.get(0),
+                )
+                .unwrap()
         };
         assert_eq!(padre_id(&e), None);
         let mensajes = contar(&e.conn, "SELECT count(*) FROM mensajes m JOIN conversaciones c ON c.id=m.conversacion_id WHERE c.id_original='agent-zz'");
         if borrar_hijo {
-            fs::remove_file(e.rutas.claude.join(format!("-home-u-Proyectos-Demo/{PRINCIPAL}/subagents/agent-zz.jsonl"))).unwrap();
+            fs::remove_file(e.rutas.claude.join(format!(
+                "-home-u-Proyectos-Demo/{PRINCIPAL}/subagents/agent-zz.jsonl"
+            )))
+            .unwrap();
         }
         fs::write(&padre, original).unwrap();
         correr(&mut e);
-        let esperado = e.conn.query_row(
-            "SELECT id FROM conversaciones WHERE id_original=?1", [PRINCIPAL], |f| f.get(0),
-        ).unwrap();
+        let esperado = e
+            .conn
+            .query_row(
+                "SELECT id FROM conversaciones WHERE id_original=?1",
+                [PRINCIPAL],
+                |f| f.get(0),
+            )
+            .unwrap();
         assert_eq!(padre_id(&e), Some(esperado));
         assert_eq!(contar(&e.conn, "SELECT count(*) FROM mensajes m JOIN conversaciones c ON c.id=m.conversacion_id WHERE c.id_original='agent-zz'"), mensajes);
-        assert_eq!(correr(&mut e), ResultadoIndexado::Hecho { nuevos: 0, cambiados: 0, errores: 0 });
+        assert_eq!(
+            correr(&mut e),
+            ResultadoIndexado::Hecho {
+                nuevos: 0,
+                cambiados: 0,
+                errores: 0
+            }
+        );
     }
 }

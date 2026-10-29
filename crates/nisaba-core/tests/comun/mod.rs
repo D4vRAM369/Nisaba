@@ -34,7 +34,11 @@ pub fn entorno() -> Entorno {
     let home = dir.path().join("home");
     let conn = db::abrir(&home.join("tablilla.db")).unwrap();
     Entorno {
-        rutas: Rutas { home, claude, codex },
+        rutas: Rutas {
+            home,
+            claude,
+            codex,
+        },
         conn,
         _dir: dir,
     }
@@ -43,4 +47,3 @@ pub fn entorno() -> Entorno {
 pub fn correr(e: &mut Entorno) -> ResultadoIndexado {
     indexar(&mut e.conn, &e.rutas, &mut |_p: Progreso| {})
 }
-

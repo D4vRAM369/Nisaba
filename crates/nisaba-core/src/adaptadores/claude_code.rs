@@ -325,7 +325,11 @@ mod tests {
     #[test]
     fn padre_salta_attachment() {
         let c = principal();
-        let a1 = c.mensajes.iter().find(|m| m.uuid.as_deref() == Some("a1")).unwrap();
+        let a1 = c
+            .mensajes
+            .iter()
+            .find(|m| m.uuid.as_deref() == Some("a1"))
+            .unwrap();
         assert_eq!(a1.id_padre.as_deref(), Some("u2"));
     }
 
@@ -403,7 +407,9 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let ruta = d.path().join("s.jsonl");
         let u = |n: u8, c: &str| {
-            format!(r#"{{"type":"user","uuid":"u{n}","sessionId":"s","message":{{"role":"user","content":"{c}"}}}}"#)
+            format!(
+                r#"{{"type":"user","uuid":"u{n}","sessionId":"s","message":{{"role":"user","content":"{c}"}}}}"#
+            )
         };
         let t = [
             u(1, "[Request interrupted by user]"),
@@ -423,14 +429,22 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let ruta = d.path().join("s.jsonl");
         let t = concat!(
-            r#"{"type":"permission-mode","permissionMode":"default","sessionId":"s"}"#, "\n",
-            r#"{"type":"ai-title","aiTitle":"Titulo inventado","sessionId":"s"}"#, "\n",
-            r#"{"type":"relocated","sessionId":"s"}"#, "\n",
-            r#"{"type":"pr-link","prUrl":"x","sessionId":"s"}"#, "\n",
-            r#"{"type":"bridge-session","sessionId":"s"}"#, "\n",
-            r#"{"type":"tools-used","sessionId":"s"}"#, "\n",
-            r#"{"type":"continued-in","sessionId":"s"}"#, "\n",
-            r#"{"type":"fork-context-ref","sessionId":"s"}"#, "\n",
+            r#"{"type":"permission-mode","permissionMode":"default","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"ai-title","aiTitle":"Titulo inventado","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"relocated","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"pr-link","prUrl":"x","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"bridge-session","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"tools-used","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"continued-in","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"fork-context-ref","sessionId":"s"}"#,
+            "\n",
         );
         std::fs::write(&ruta, t).unwrap();
         assert!(parsear(&ruta).unwrap().avisos.is_empty());

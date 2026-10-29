@@ -1,8 +1,19 @@
 use crate::modelo::{Mensaje, Rol, TipoParte};
 
 const GENERICOS: [&str; 13] = [
-    "continúa", "continua", "sigue", "ok", "vale", "si", "sí", "dale", "adelante", "continue",
-    "go on", "go ahead", "yes",
+    "continúa",
+    "continua",
+    "sigue",
+    "ok",
+    "vale",
+    "si",
+    "sí",
+    "dale",
+    "adelante",
+    "continue",
+    "go on",
+    "go ahead",
+    "yes",
 ];
 const MAX_TITULO: usize = 80;
 
@@ -25,9 +36,22 @@ pub fn titulo_util(proyecto: Option<&str>, mensajes: &[Mensaje]) -> String {
     let texto = mensajes
         .iter()
         .filter(|m| m.rol == Rol::Usuario && !m.oculto)
-        .flat_map(|m| m.partes.iter().filter(|p| p.tipo == TipoParte::Texto).take(1))
+        .flat_map(|m| {
+            m.partes
+                .iter()
+                .filter(|p| p.tipo == TipoParte::Texto)
+                .take(1)
+        })
         .find(|p| candidato(&p.contenido))
-        .map(|p| p.contenido.trim().lines().next().unwrap_or("").trim().to_string())
+        .map(|p| {
+            p.contenido
+                .trim()
+                .lines()
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string()
+        })
         .unwrap_or_else(|| "(sin título)".to_string());
     let completo = format!("{proyecto} · {texto}");
     if completo.chars().count() <= MAX_TITULO {

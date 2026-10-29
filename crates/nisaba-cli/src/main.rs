@@ -15,7 +15,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "nisaba", version, about = "Tablilla local de tus sesiones con IA")]
+#[command(
+    name = "nisaba",
+    version,
+    about = "Tablilla local de tus sesiones con IA"
+)]
 struct Cli {
     #[command(subcommand)]
     orden: Orden,
@@ -77,7 +81,8 @@ fn main() -> ExitCode {
 }
 
 fn abrir(rutas: &Rutas) -> Result<Connection, String> {
-    db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| format!("no puedo abrir la tablilla: {e}"))
+    db::abrir(&rutas.home.join("tablilla.db"))
+        .map_err(|e| format!("no puedo abrir la tablilla: {e}"))
 }
 
 /// Indexa en silencio antes de consultar. `Ocupado` sigue; `Fallo` avisa y sigue.
@@ -96,23 +101,49 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
     let e = |x: rusqlite::Error| x.to_string();
     match orden {
         Orden::Mcp => unreachable!("atendido arriba"),
-        Orden::Buscar { consulta, fuente, proyecto, desde, razonamiento, codigo, limite, json } => {
+        Orden::Buscar {
+            consulta,
+            fuente,
+            proyecto,
+            desde,
+            razonamiento,
+            codigo,
+            limite,
+            json,
+        } => {
             let fuente = match fuente.as_deref() {
                 None => None,
-                Some(s) => Some(Fuente::desde_str(s).ok_or("fuente desconocida: usa claude-code o codex")?),
+                Some(s) => Some(
+                    Fuente::desde_str(s).ok_or("fuente desconocida: usa claude-code o codex")?,
+                ),
             };
             indexar_antes(&mut conn, &rutas);
-            let f = Filtros { fuente, proyecto, desde, razonamiento, codigo, limite };
+            let f = Filtros {
+                fuente,
+                proyecto,
+                desde,
+                razonamiento,
+                codigo,
+                limite,
+            };
             let r = buscar(&conn, &consulta, &f, "cli").map_err(e)?;
             if json {
-                println!("{}", serde_json::to_string_pretty(&r).map_err(|x| x.to_string())?);
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&r).map_err(|x| x.to_string())?
+                );
                 return Ok(0);
             }
             let tty = std::io::stdout().is_terminal();
             print!("{}", texto_busqueda(&r, tty, false));
             Ok(0)
         }
-        Orden::Ver { id, desde, cantidad, todo } => {
+        Orden::Ver {
+            id,
+            desde,
+            cantidad,
+            todo,
+        } => {
             indexar_antes(&mut conn, &rutas);
             let cid = match resolver(&conn, &id).map_err(e)? {
                 Resolucion::Uno(c) => c,
@@ -125,7 +156,12 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                     return Ok(1);
                 }
             };
-            let t = Tramo { desde, cantidad, alrededor_de: None, todo };
+            let t = Tramo {
+                desde,
+                cantidad,
+                alrededor_de: None,
+                todo,
+            };
             let l = leer(&conn, cid, &t).map_err(e)?;
             print!("{}", a_markdown(&l));
             Ok(0)
@@ -134,12 +170,18 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             indexar_antes(&mut conn, &rutas);
             match resolver(&conn, &id).map_err(e)? {
                 Resolucion::Ninguno => return Err(format!("No encuentro la conversación {id}")),
-                Resolucion::Ambiguo(ids) => return Err(format!("Id ambiguo: {id} encaja con {}", ids.join(", "))),
+                Resolucion::Ambiguo(ids) => {
+                    return Err(format!("Id ambiguo: {id} encaja con {}", ids.join(", ")))
+                }
                 Resolucion::Uno(_) => {}
             }
             let nombre = format!("nisaba-gui{}", std::env::consts::EXE_SUFFIX);
-            let junto = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join(&nombre)));
-            let ejecutable = junto.filter(|p| p.is_file()).unwrap_or_else(|| PathBuf::from(&nombre));
+            let junto = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join(&nombre)));
+            let ejecutable = junto
+                .filter(|p| p.is_file())
+                .unwrap_or_else(|| PathBuf::from(&nombre));
             std::process::Command::new(ejecutable)
                 .args(["--abrir", &id])
                 .stdin(std::process::Stdio::null())
@@ -154,7 +196,11 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 eprintln!("Indexando {}/{}…", p.vistos, p.total);
             });
             match r {
-                ResultadoIndexado::Hecho { nuevos, cambiados, errores } => {
+                ResultadoIndexado::Hecho {
+                    nuevos,
+                    cambiados,
+                    errores,
+                } => {
                     println!("Listo: {nuevos} nuevos, {cambiados} cambiados, {errores} con error.");
                     Ok(0)
                 }
@@ -171,8 +217,15 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
         Orden::Salud => {
             indexar_antes(&mut conn, &rutas);
             for f in informe(&conn).map_err(e)? {
-                let marca = if f.vistos == f.parseados { "✓" } else { "✗" };
-                let ultima = f.ultima.as_deref().map(|u| u.chars().take(10).collect::<String>());
+                let marca = if f.vistos == f.parseados {
+                    "✓"
+                } else {
+                    "✗"
+                };
+                let ultima = f
+                    .ultima
+                    .as_deref()
+                    .map(|u| u.chars().take(10).collect::<String>());
                 println!(
                     "{marca} {}  vistos {} · parseados {} · avisos {} · última {}",
                     f.fuente.as_str(),
@@ -189,7 +242,8 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 .filter(|v| !v.is_empty())
                 .map(PathBuf::from)
                 .unwrap_or_else(|| {
-                    PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".claude/settings.json")
+                    PathBuf::from(std::env::var_os("HOME").unwrap_or_default())
+                        .join(".claude/settings.json")
                 });
             if let Some(a) = aviso_limpieza_claude(&settings) {
                 println!("\n⚠ {a}");
@@ -204,7 +258,13 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 )
                 .map_err(e)?;
             let filas = st
-                .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))
+                .query_map([], |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                })
                 .map_err(e)?
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(e)?;

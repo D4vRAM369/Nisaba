@@ -423,7 +423,10 @@ mod tests {
         let c = parsear(&ruta).unwrap();
         assert!(c.avisos.is_empty(), "{:?}", c.avisos);
         assert_eq!(c.mensajes.len(), 1);
-        assert_eq!(c.mensajes[0].partes[0].contenido, "web_search: consulta inventada");
+        assert_eq!(
+            c.mensajes[0].partes[0].contenido,
+            "web_search: consulta inventada"
+        );
     }
 
     #[test]
@@ -451,7 +454,10 @@ mod tests {
         let c = parsear(&ruta).unwrap();
         let visibles: Vec<_> = c.mensajes.iter().filter(|m| !m.oculto).collect();
         assert_eq!(visibles.len(), 1);
-        assert_eq!(visibles[0].partes[0].contenido, "Texto normal de la persona");
+        assert_eq!(
+            visibles[0].partes[0].contenido,
+            "Texto normal de la persona"
+        );
     }
 
     #[test]
@@ -463,7 +469,9 @@ mod tests {
             plano.as_bytes(),
             ruzstd::encoding::CompressionLevel::Fastest,
         );
-        let ruta = d.path().join("sessions/2026/01/01/rollout-2026-01-01T00-00-00-zz9.jsonl.zst");
+        let ruta = d
+            .path()
+            .join("sessions/2026/01/01/rollout-2026-01-01T00-00-00-zz9.jsonl.zst");
         std::fs::create_dir_all(ruta.parent().unwrap()).unwrap();
         std::fs::write(&ruta, zst).unwrap();
         assert_eq!(descubrir(d.path()), vec![ruta.clone()]);

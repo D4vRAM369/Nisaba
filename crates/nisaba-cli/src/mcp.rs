@@ -44,7 +44,10 @@ fn contener(linea: &str, f: impl FnOnce() -> Option<Value>) -> Option<Value> {
         Ok(r) => r,
         Err(_) => {
             eprintln!("Error interno al procesar una petición");
-            let id = serde_json::from_str::<Value>(linea).ok()?.get("id")?.clone();
+            let id = serde_json::from_str::<Value>(linea)
+                .ok()?
+                .get("id")?
+                .clone();
             Some(error(id, -32603, "error interno"))
         }
     }
@@ -68,14 +71,21 @@ fn procesar(linea: &str, conn: &mut Connection, rutas: &Rutas) -> Option<Value> 
     };
     let id = obj.get("id").cloned();
     let Some(metodo) = obj.get("method").and_then(Value::as_str) else {
-        return Some(error(id.unwrap_or(Value::Null), -32600, "petición inválida: falta method"));
+        return Some(error(
+            id.unwrap_or(Value::Null),
+            -32600,
+            "petición inválida: falta method",
+        ));
     };
     // Sin id es una notificación: nunca se responde.
     let id = id?;
     let params = obj.get("params").cloned().unwrap_or(Value::Null);
     Some(match metodo {
         "initialize" => {
-            let v = params.get("protocolVersion").and_then(Value::as_str).unwrap_or(VERSION_POR_DEFECTO);
+            let v = params
+                .get("protocolVersion")
+                .and_then(Value::as_str)
+                .unwrap_or(VERSION_POR_DEFECTO);
             exito(
                 id,
                 json!({
@@ -138,14 +148,20 @@ fn texto(t: String, es_error: bool) -> Value {
 
 fn llamar(params: &Value, conn: &mut Connection, rutas: &Rutas) -> Value {
     let nombre = params.get("name").and_then(Value::as_str).unwrap_or("");
-    let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let args = params
+        .get("arguments")
+        .cloned()
+        .unwrap_or_else(|| json!({}));
     if nombre != "buscar_conversaciones" && nombre != "leer_conversacion" {
         return texto(format!("Herramienta desconocida: {nombre:?}. Usa buscar_conversaciones o leer_conversacion."), true);
     }
     // Validar antes de indexar: un argumento ausente no debe costar una indexación.
     let r = if nombre == "buscar_conversaciones" {
         let Some(consulta) = args.get("consulta").and_then(Value::as_str) else {
-            return texto("Falta el argumento obligatorio «consulta» (string).".into(), true);
+            return texto(
+                "Falta el argumento obligatorio «consulta» (string).".into(),
+                true,
+            );
         };
         indexar_antes(conn, rutas);
         buscar_tool(conn, consulta, &args)
@@ -176,12 +192,20 @@ fn entero(args: &Value, k: &str) -> Option<i64> {
 fn buscar_tool(conn: &Connection, consulta: &str, args: &Value) -> Result<String, String> {
     let fuente = match args.get("fuente").and_then(Value::as_str) {
         None => None,
-        Some(s) => Some(Fuente::desde_str(s).ok_or("Fuente desconocida: usa claude-code o codex.")?),
+        Some(s) => {
+            Some(Fuente::desde_str(s).ok_or("Fuente desconocida: usa claude-code o codex.")?)
+        }
     };
     let mut f = Filtros {
         fuente,
-        proyecto: args.get("proyecto").and_then(Value::as_str).map(String::from),
-        razonamiento: args.get("razonamiento").and_then(Value::as_bool).unwrap_or(false),
+        proyecto: args
+            .get("proyecto")
+            .and_then(Value::as_str)
+            .map(String::from),
+        razonamiento: args
+            .get("razonamiento")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
         codigo: args.get("codigo").and_then(Value::as_bool).unwrap_or(false),
         ..Default::default()
     };
@@ -222,7 +246,10 @@ mod tests {
 
     #[test]
     fn panico_con_id_responde_32603() {
-        let r = contener(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call"}"#, || panic!("boom")).unwrap();
+        let r = contener(r#"{"jsonrpc":"2.0","id":4,"method":"tools/call"}"#, || {
+            panic!("boom")
+        })
+        .unwrap();
         assert_eq!(r["error"]["code"], -32603);
         assert_eq!(r["id"], 4);
     }

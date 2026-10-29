@@ -21,17 +21,24 @@ fn id_de(e: &Entorno, publico: &str) -> i64 {
 fn solo_conversacion_sin_ruido() {
     let e = indexado();
     let l = leer(&e.conn, id_de(&e, "cc-a1b2c3d4"), &Tramo::default()).unwrap();
-    assert!(!l.bloques.iter().any(|b| matches!(b, Bloque::Sistema { .. })));
-    assert!(matches!(
-        l.bloques.as_slice(),
-        [
-            Bloque::Usuario { .. },
-            Bloque::Asistente { .. },
-            Bloque::Herramientas { n: 2, archivos: 1 },
-            Bloque::Asistente { .. },
-            Bloque::Subagente { .. }
-        ]
-    ), "{:#?}", l.bloques);
+    assert!(!l
+        .bloques
+        .iter()
+        .any(|b| matches!(b, Bloque::Sistema { .. })));
+    assert!(
+        matches!(
+            l.bloques.as_slice(),
+            [
+                Bloque::Usuario { .. },
+                Bloque::Asistente { .. },
+                Bloque::Herramientas { n: 2, archivos: 1 },
+                Bloque::Asistente { .. },
+                Bloque::Subagente { .. }
+            ]
+        ),
+        "{:#?}",
+        l.bloques
+    );
     assert_eq!(l.total, 5);
     assert_eq!(l.id_publico, "cc-a1b2c3d4");
 }
@@ -47,7 +54,11 @@ fn subagente_en_su_sitio() {
 #[test]
 fn todo_muestra_ocultos() {
     let e = indexado();
-    let t = Tramo { todo: true, cantidad: 100, ..Default::default() };
+    let t = Tramo {
+        todo: true,
+        cantidad: 100,
+        ..Default::default()
+    };
     let l = leer(&e.conn, id_de(&e, "cc-a1b2c3d4"), &t).unwrap();
     assert!(l.bloques.iter().any(|b| matches!(b,
         Bloque::Sistema { texto } if texto.contains("<system-reminder>"))));
@@ -63,10 +74,26 @@ fn rama_activa() {
     std::fs::create_dir_all(&codex).unwrap();
     let home = dir.path().join("home");
     let mut conn = db::abrir(&home.join("tablilla.db")).unwrap();
-    indexar(&mut conn, &Rutas { home, claude, codex }, &mut |_| {});
+    indexar(
+        &mut conn,
+        &Rutas {
+            home,
+            claude,
+            codex,
+        },
+        &mut |_| {},
+    );
 
     let id = resolver_id(&conn, "cc-b1b1b1b1").unwrap().unwrap();
-    let l = leer(&conn, id, &Tramo { cantidad: 100, ..Default::default() }).unwrap();
+    let l = leer(
+        &conn,
+        id,
+        &Tramo {
+            cantidad: 100,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let md = a_markdown(&l);
     assert!(!md.contains("ramaperdida"), "{md}");
     assert!(md.contains("Mejor usemos JSON."));
@@ -85,10 +112,12 @@ fn sintetica() -> (Entorno, i64) {
     let cid = e.conn.last_insert_rowid();
     for i in 0..60 {
         let rol = if i % 2 == 0 { "usuario" } else { "asistente" };
-        e.conn.execute(
-            "INSERT INTO mensajes(conversacion_id, orden, rol, oculto) VALUES (?1, ?2, ?3, 0)",
-            rusqlite::params![cid, i, rol],
-        ).unwrap();
+        e.conn
+            .execute(
+                "INSERT INTO mensajes(conversacion_id, orden, rol, oculto) VALUES (?1, ?2, ?3, 0)",
+                rusqlite::params![cid, i, rol],
+            )
+            .unwrap();
         let mid = e.conn.last_insert_rowid();
         e.conn.execute(
             "INSERT INTO partes(mensaje_id, orden, tipo, contenido) VALUES (?1, 0, 'texto', ?2)",
@@ -101,7 +130,11 @@ fn sintetica() -> (Entorno, i64) {
 #[test]
 fn tramo_centrado() {
     let (e, cid) = sintetica();
-    let t = Tramo { alrededor_de: Some(40), cantidad: 20, ..Default::default() };
+    let t = Tramo {
+        alrededor_de: Some(40),
+        cantidad: 20,
+        ..Default::default()
+    };
     let l = leer(&e.conn, cid, &t).unwrap();
     assert_eq!((l.desde, l.bloques.len(), l.total), (30, 20, 60));
     assert_eq!(l.coincidencia, Some(40));
@@ -110,7 +143,11 @@ fn tramo_centrado() {
 #[test]
 fn markdown_indica_siguiente_tramo() {
     let (e, cid) = sintetica();
-    let t = Tramo { alrededor_de: Some(40), cantidad: 20, ..Default::default() };
+    let t = Tramo {
+        alrededor_de: Some(40),
+        cantidad: 20,
+        ..Default::default()
+    };
     let md = a_markdown(&leer(&e.conn, cid, &t).unwrap());
     assert!(md.contains("bloques 31–50 de 60"), "{md}");
     assert!(md.trim_end().ends_with("--desde 50"), "{md}");
@@ -121,7 +158,11 @@ fn markdown_indica_siguiente_tramo() {
 fn rama_atraviesa_attachment() {
     let e = indexado();
     let l = leer(&e.conn, id_de(&e, "cc-a1b2c3d4"), &Tramo::default()).unwrap();
-    assert!(matches!(l.bloques.first(), Some(Bloque::Usuario { .. })), "{:#?}", l.bloques);
+    assert!(
+        matches!(l.bloques.first(), Some(Bloque::Usuario { .. })),
+        "{:#?}",
+        l.bloques
+    );
     assert_eq!(l.total, 5);
 }
 
@@ -134,8 +175,14 @@ fn padre_ausente_no_trunca() {
     ).unwrap();
     let cid = e.conn.last_insert_rowid();
     // m3 apunta a "fantasma", que no está indexado.
-    for (i, (uuid, padre)) in [("m1", None), ("m2", Some("m1")), ("m3", Some("fantasma")), ("m4", Some("m3"))]
-        .into_iter().enumerate()
+    for (i, (uuid, padre)) in [
+        ("m1", None),
+        ("m2", Some("m1")),
+        ("m3", Some("fantasma")),
+        ("m4", Some("m3")),
+    ]
+    .into_iter()
+    .enumerate()
     {
         e.conn.execute(
             "INSERT INTO mensajes(conversacion_id, orden, uuid, id_padre, rol, oculto) VALUES (?1, ?2, ?3, ?4, ?5, 0)",
@@ -173,12 +220,34 @@ fn rama_cruza_la_compactacion() {
         l("assistant", "a2", "\"u2\"", "", "respuesta posterior"),
         r#"{"type":"last-prompt","lastPrompt":"x","leafUuid":"a2","sessionId":"s"}"#.to_string(),
     ];
-    std::fs::write(claude.join("-home-u-P/zzzz0001.jsonl"), lineas.join("\n") + "\n").unwrap();
+    std::fs::write(
+        claude.join("-home-u-P/zzzz0001.jsonl"),
+        lineas.join("\n") + "\n",
+    )
+    .unwrap();
     let home = dir.path().join("home");
     let mut conn = db::abrir(&home.join("tablilla.db")).unwrap();
-    indexar(&mut conn, &Rutas { home, claude, codex }, &mut |_| {});
+    indexar(
+        &mut conn,
+        &Rutas {
+            home,
+            claude,
+            codex,
+        },
+        &mut |_| {},
+    );
     let id = resolver_id(&conn, "cc-zzzz0001").unwrap().unwrap();
-    let md = a_markdown(&leer(&conn, id, &Tramo { cantidad: 100, ..Default::default() }).unwrap());
+    let md = a_markdown(
+        &leer(
+            &conn,
+            id,
+            &Tramo {
+                cantidad: 100,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
     assert!(md.contains("respuesta anterior a compactar"), "{md}");
     assert!(md.contains("respuesta posterior"), "{md}");
 }
@@ -198,17 +267,32 @@ fn todo_permite_leer_razonamiento_y_herramientas() {
     let mid = e.conn.last_insert_rowid();
     let razonamiento = "Comparo las rutas\ny elijo la más corta.";
     let herramienta = "Read: {\"file_path\":\"/tmp/inventado.rs\"}";
-    for (orden, tipo, contenido) in [(0, "razonamiento", razonamiento), (1, "herramienta", herramienta)] {
-        e.conn.execute(
-            "INSERT INTO partes(mensaje_id, orden, tipo, contenido) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![mid, orden, tipo, contenido],
-        ).unwrap();
+    for (orden, tipo, contenido) in [
+        (0, "razonamiento", razonamiento),
+        (1, "herramienta", herramienta),
+    ] {
+        e.conn
+            .execute(
+                "INSERT INTO partes(mensaje_id, orden, tipo, contenido) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![mid, orden, tipo, contenido],
+            )
+            .unwrap();
     }
     let normal = a_markdown(&leer(&e.conn, cid, &Tramo::default()).unwrap());
     assert!(!normal.contains(razonamiento));
     assert!(!normal.contains(herramienta));
     assert!(normal.contains("1 herramientas · 1 archivos"));
-    let todo = a_markdown(&leer(&e.conn, cid, &Tramo { todo: true, ..Default::default() }).unwrap());
+    let todo = a_markdown(
+        &leer(
+            &e.conn,
+            cid,
+            &Tramo {
+                todo: true,
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
     assert!(todo.contains(razonamiento), "{todo}");
     assert!(todo.contains(herramienta), "{todo}");
 }

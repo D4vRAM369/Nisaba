@@ -78,7 +78,13 @@ fn abrir_id_desconocido() {
 #[cfg(unix)]
 #[test]
 fn abrir_lanza_gui_del_path_con_id_literal() {
-    use std::{fs, os::unix::fs::PermissionsExt, path::Path, process::Command, time::{Duration, Instant}};
+    use std::{
+        fs,
+        os::unix::fs::PermissionsExt,
+        path::Path,
+        process::Command,
+        time::{Duration, Instant},
+    };
     let c = ctx();
     let bin = c.dir.path().join("bin");
     fs::create_dir_all(&bin).unwrap();
@@ -86,15 +92,27 @@ fn abrir_lanza_gui_del_path_con_id_literal() {
     fs::copy(env!("CARGO_BIN_EXE_nisaba"), &cli).unwrap();
     let argumentos = c.dir.path().join("argumentos");
     let gui = bin.join("nisaba-gui");
-    fs::write(&gui, "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$NISABA_TEST_ARGUMENTOS\"\n".replace("\\\"", "\"")).unwrap();
+    fs::write(
+        &gui,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$NISABA_TEST_ARGUMENTOS\"\n".replace("\\\"", "\""),
+    )
+    .unwrap();
     fs::set_permissions(&gui, fs::Permissions::from_mode(0o755)).unwrap();
     let plantilla = c.comando(&[]);
     let mut comando = Command::new(&cli);
-    comando.args(["abrir", "cx-cx01"]).envs(plantilla.get_envs().filter_map(|(k,v)| v.map(|v| (k,v))))
-        .env("PATH", &bin).env("NISABA_TEST_ARGUMENTOS", &argumentos);
+    comando
+        .args(["abrir", "cx-cx01"])
+        .envs(plantilla.get_envs().filter_map(|(k, v)| v.map(|v| (k, v))))
+        .env("PATH", &bin)
+        .env("NISABA_TEST_ARGUMENTOS", &argumentos);
     let o = comando.output().unwrap();
     assert_eq!(o.status.code(), Some(0), "{}", err(&o));
     let limite = Instant::now() + Duration::from_secs(2);
-    while !Path::new(&argumentos).exists() && Instant::now() < limite { std::thread::sleep(Duration::from_millis(10)); }
-    assert_eq!(fs::read_to_string(argumentos).unwrap(), "--abrir\ncx-cx01\n");
+    while !Path::new(&argumentos).exists() && Instant::now() < limite {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(
+        fs::read_to_string(argumentos).unwrap(),
+        "--abrir\ncx-cx01\n"
+    );
 }

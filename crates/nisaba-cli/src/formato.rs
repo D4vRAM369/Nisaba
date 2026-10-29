@@ -17,7 +17,12 @@ pub fn texto_busqueda(r: &Respuesta, tty: bool, con_orden: bool) -> String {
     for x in &r.resultados {
         let fecha: String = x.fin.as_deref().unwrap_or("").chars().take(10).collect();
         s.push_str(&format!("{}  {}\n", x.id_publico, x.titulo));
-        s.push_str(&format!("   {} · {} · {} coincidencias\n", x.fuente.as_str(), fecha, x.coincidencias));
+        s.push_str(&format!(
+            "   {} · {} · {} coincidencias\n",
+            x.fuente.as_str(),
+            fecha,
+            x.coincidencias
+        ));
         s.push_str(&format!("   {}\n", resaltar(&x.fragmento, tty)));
         if con_orden {
             s.push_str(&format!("   alrededor_de: {}\n", x.orden_mensaje));

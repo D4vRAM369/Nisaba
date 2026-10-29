@@ -20,7 +20,14 @@ pub struct Filtros {
 
 impl Default for Filtros {
     fn default() -> Self {
-        Filtros { fuente: None, proyecto: None, desde: None, razonamiento: false, codigo: false, limite: 10 }
+        Filtros {
+            fuente: None,
+            proyecto: None,
+            desde: None,
+            razonamiento: false,
+            codigo: false,
+            limite: 10,
+        }
     }
 }
 
@@ -121,23 +128,34 @@ fn normalizar(s: &str) -> String {
     let limpio: String = s
         .to_lowercase()
         .chars()
-        .map(|c| if c.is_alphanumeric() { sin_acentos(c) } else { ' ' })
+        .map(|c| {
+            if c.is_alphanumeric() {
+                sin_acentos(c)
+            } else {
+                ' '
+            }
+        })
         .collect();
-    format!(" {} ", limpio.split_whitespace().collect::<Vec<_>>().join(" "))
+    format!(
+        " {} ",
+        limpio.split_whitespace().collect::<Vec<_>>().join(" ")
+    )
 }
 
 fn sugerir_traduccion(entrada: &str) -> Option<String> {
     let texto = normalizar(entrada);
-    DICCIONARIO.iter().find_map(|(es, en)| {
-        if texto.contains(&normalizar(es)) {
-            Some(*en)
-        } else if texto.contains(&normalizar(en)) {
-            Some(*es)
-        } else {
-            None
-        }
-    })
-    .map(|t| format!("Sin resultados. ¿Probar «{t}»?"))
+    DICCIONARIO
+        .iter()
+        .find_map(|(es, en)| {
+            if texto.contains(&normalizar(es)) {
+                Some(*en)
+            } else if texto.contains(&normalizar(en)) {
+                Some(*es)
+            } else {
+                None
+            }
+        })
+        .map(|t| format!("Sin resultados. ¿Probar «{t}»?"))
 }
 
 struct Grupo {
@@ -153,7 +171,12 @@ struct Grupo {
     dias: f64,
 }
 
-pub fn buscar(conn: &Connection, entrada: &str, f: &Filtros, canal: &str) -> rusqlite::Result<Respuesta> {
+pub fn buscar(
+    conn: &Connection,
+    entrada: &str,
+    f: &Filtros,
+    canal: &str,
+) -> rusqlite::Result<Respuesta> {
     contar_uso(conn, canal)?;
     buscar_sin_contar(conn, entrada, f)
 }
@@ -169,9 +192,17 @@ pub fn contar_uso(conn: &Connection, canal: &str) -> rusqlite::Result<()> {
 }
 
 /// Como `buscar`, pero sin tocar el contador: la GUI busca mientras escribes y solo cuenta al abrir un resultado.
-pub fn buscar_sin_contar(conn: &Connection, entrada: &str, f: &Filtros) -> rusqlite::Result<Respuesta> {
+pub fn buscar_sin_contar(
+    conn: &Connection,
+    entrada: &str,
+    f: &Filtros,
+) -> rusqlite::Result<Respuesta> {
     let Some(fts) = consulta_fts(entrada) else {
-        return Ok(Respuesta { resultados: vec![], total_sesiones: 0, sugerencia: None });
+        return Ok(Respuesta {
+            resultados: vec![],
+            total_sesiones: 0,
+            sugerencia: None,
+        });
     };
 
     let mut tipos = vec!["'texto'"];
@@ -239,9 +270,7 @@ pub fn buscar_sin_contar(conn: &Connection, entrada: &str, f: &Filtros) -> rusql
     // bm25 es negativo (más negativo = mejor); lo reciente pesa hasta un 50 % más.
     let puntaje = |g: &Grupo| g.mejor * (1.0 + 0.5 * (-g.dias / 60.0).exp());
     let mut ordenados: Vec<(i64, Grupo)> = grupos.into_iter().collect();
-    ordenados.sort_by(|a, b| {
-        puntaje(&a.1).total_cmp(&puntaje(&b.1)).then(a.0.cmp(&b.0))
-    });
+    ordenados.sort_by(|a, b| puntaje(&a.1).total_cmp(&puntaje(&b.1)).then(a.0.cmp(&b.0)));
     ordenados.truncate(f.limite);
 
     let mut resultados = Vec::with_capacity(ordenados.len());
@@ -252,7 +281,9 @@ pub fn buscar_sin_contar(conn: &Connection, entrada: &str, f: &Filtros) -> rusql
             params![fts, g.parte_id],
             |r| r.get(0),
         )?;
-        let Some(fuente) = Fuente::desde_str(&g.fuente) else { continue };
+        let Some(fuente) = Fuente::desde_str(&g.fuente) else {
+            continue;
+        };
         resultados.push(Resultado {
             id_publico: id_publico(fuente, &g.id_original),
             titulo: g.titulo.unwrap_or_default(),
@@ -272,7 +303,11 @@ pub fn buscar_sin_contar(conn: &Connection, entrada: &str, f: &Filtros) -> rusql
     } else {
         None
     };
-    Ok(Respuesta { resultados, total_sesiones, sugerencia })
+    Ok(Respuesta {
+        resultados,
+        total_sesiones,
+        sugerencia,
+    })
 }
 
 /// Los ids de Codex (UUIDv7) y de subagentes (`agent-…`) comparten el comienzo:
@@ -305,8 +340,13 @@ pub enum Resolucion {
 /// `cc-a1b2c3d4` → conversación. Cada fila se compara por el extremo que usa
 /// `id_publico` para ella (`por_el_final`); si encajan varias no se elige ninguna.
 pub fn resolver(conn: &Connection, id_publico_txt: &str) -> rusqlite::Result<Resolucion> {
-    let Some((prefijo, resto)) = id_publico_txt.split_once('-') else { return Ok(Resolucion::Ninguno) };
-    let Some(fuente) = [Fuente::ClaudeCode, Fuente::Codex].into_iter().find(|f| f.prefijo() == prefijo) else {
+    let Some((prefijo, resto)) = id_publico_txt.split_once('-') else {
+        return Ok(Resolucion::Ninguno);
+    };
+    let Some(fuente) = [Fuente::ClaudeCode, Fuente::Codex]
+        .into_iter()
+        .find(|f| f.prefijo() == prefijo)
+    else {
         return Ok(Resolucion::Ninguno);
     };
     if resto.is_empty() {
@@ -321,14 +361,20 @@ pub fn resolver(conn: &Connection, id_publico_txt: &str) -> rusqlite::Result<Res
          ORDER BY id LIMIT 5",
     )?;
     let filas: Vec<(i64, String)> = stmt
-        .query_map(params![fuente.as_str(), resto, resto.chars().count() as i64], |r| {
-            Ok((r.get(0)?, r.get(1)?))
-        })?
+        .query_map(
+            params![fuente.as_str(), resto, resto.chars().count() as i64],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?
         .collect::<Result<_, _>>()?;
     Ok(match filas.len() {
         0 => Resolucion::Ninguno,
         1 => Resolucion::Uno(filas[0].0),
-        _ => Resolucion::Ambiguo(filas.iter().map(|(_, o)| format!("{prefijo}-{o}")).collect()),
+        _ => Resolucion::Ambiguo(
+            filas
+                .iter()
+                .map(|(_, o)| format!("{prefijo}-{o}"))
+                .collect(),
+        ),
     })
 }
 
@@ -345,7 +391,11 @@ pub fn recientes(conn: &Connection, f: &Filtros) -> rusqlite::Result<Respuesta> 
     recientes_desde(conn, f, 0)
 }
 
-pub fn recientes_desde(conn: &Connection, f: &Filtros, desplazamiento: usize) -> rusqlite::Result<Respuesta> {
+pub fn recientes_desde(
+    conn: &Connection,
+    f: &Filtros,
+    desplazamiento: usize,
+) -> rusqlite::Result<Respuesta> {
     const CONDICION: &str = "c.padre_id IS NULL AND c.fuente IN ('claude-code','codex')
         AND (?1 IS NULL OR c.fuente=?1)
         AND (?2 IS NULL OR c.proyecto=?2)
@@ -353,7 +403,8 @@ pub fn recientes_desde(conn: &Connection, f: &Filtros, desplazamiento: usize) ->
     let fuente = f.fuente.map(|f| f.as_str());
     let total_sesiones = conn.query_row(
         &format!("SELECT COUNT(*) FROM conversaciones c WHERE {CONDICION}"),
-        params![fuente, f.proyecto, f.desde], |r| r.get(0),
+        params![fuente, f.proyecto, f.desde],
+        |r| r.get(0),
     )?;
     let mut st = conn.prepare(&format!(
         "SELECT c.fuente,c.id_original,COALESCE(c.titulo,''),c.proyecto,c.fin,
@@ -362,14 +413,35 @@ pub fn recientes_desde(conn: &Connection, f: &Filtros, desplazamiento: usize) ->
            ORDER BY m.orden,p.orden LIMIT 1),'')
          FROM conversaciones c WHERE {CONDICION} ORDER BY c.fin DESC,c.id DESC LIMIT ?4 OFFSET ?5"
     ))?;
-    let resultados = st.query_map(params![fuente, f.proyecto, f.desde,
-        i64::try_from(f.limite).unwrap_or(i64::MAX),
-        i64::try_from(desplazamiento).unwrap_or(i64::MAX)], |r| {
-        let nombre: String = r.get(0)?;
-        let fuente = Fuente::desde_str(&nombre).ok_or(rusqlite::Error::InvalidQuery)?;
-        let id: String = r.get(1)?;
-        Ok(Resultado { id_publico: id_publico(fuente,&id), fuente, titulo:r.get(2)?, proyecto:r.get(3)?, fin:r.get(4)?,
-            fragmento:r.get(5)?, coincidencias:0, orden_mensaje:0 })
-    })?.collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(Respuesta { resultados, total_sesiones, sugerencia: None })
+    let resultados = st
+        .query_map(
+            params![
+                fuente,
+                f.proyecto,
+                f.desde,
+                i64::try_from(f.limite).unwrap_or(i64::MAX),
+                i64::try_from(desplazamiento).unwrap_or(i64::MAX)
+            ],
+            |r| {
+                let nombre: String = r.get(0)?;
+                let fuente = Fuente::desde_str(&nombre).ok_or(rusqlite::Error::InvalidQuery)?;
+                let id: String = r.get(1)?;
+                Ok(Resultado {
+                    id_publico: id_publico(fuente, &id),
+                    fuente,
+                    titulo: r.get(2)?,
+                    proyecto: r.get(3)?,
+                    fin: r.get(4)?,
+                    fragmento: r.get(5)?,
+                    coincidencias: 0,
+                    orden_mensaje: 0,
+                })
+            },
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(Respuesta {
+        resultados,
+        total_sesiones,
+        sugerencia: None,
+    })
 }

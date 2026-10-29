@@ -21,7 +21,11 @@ fn sesion(peticiones: &[Value]) -> (Vec<String>, Option<i32>) {
         }
     }
     let o = hijo.wait_with_output().unwrap();
-    let lineas = String::from_utf8(o.stdout).unwrap().lines().map(String::from).collect();
+    let lineas = String::from_utf8(o.stdout)
+        .unwrap()
+        .lines()
+        .map(String::from)
+        .collect();
     (lineas, o.status.code())
 }
 
@@ -40,7 +44,11 @@ fn parse(l: &str) -> Value {
 #[test]
 fn initialize_y_lista() {
     let (l, cod) = sesion(&[
-        req(1, "initialize", json!({"protocolVersion":"2024-11-05","capabilities":{}})),
+        req(
+            1,
+            "initialize",
+            json!({"protocolVersion":"2024-11-05","capabilities":{}}),
+        ),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
         req(2, "tools/list", json!({})),
     ]);
@@ -50,13 +58,22 @@ fn initialize_y_lista() {
     assert_eq!(a["result"]["serverInfo"]["name"], "nisaba");
     assert_eq!(a["result"]["protocolVersion"], "2024-11-05");
     let b = parse(&l[1]);
-    let nombres: Vec<&str> = b["result"]["tools"].as_array().unwrap().iter().map(|t| t["name"].as_str().unwrap()).collect();
+    let nombres: Vec<&str> = b["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
     assert_eq!(nombres, ["buscar_conversaciones", "leer_conversacion"]);
 }
 
 #[test]
 fn llamada_buscar() {
-    let (l, _) = sesion(&[llamada(1, "buscar_conversaciones", json!({"consulta":"subtitulos"}))]);
+    let (l, _) = sesion(&[llamada(
+        1,
+        "buscar_conversaciones",
+        json!({"consulta":"subtitulos"}),
+    )]);
     let r = parse(&l[0]);
     let t = r["result"]["content"][0]["text"].as_str().unwrap();
     assert!(t.contains("cx-cx01"), "{t}");
@@ -95,14 +112,23 @@ fn metodo_desconocido() {
 #[test]
 fn json_invalido_y_estructura_invalida() {
     let c = ctx();
-    let mut hijo = c.comando(&["mcp"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut hijo = c
+        .comando(&["mcp"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
     {
         let mut si = hijo.stdin.take().unwrap();
         writeln!(si, "esto no es json").unwrap();
         writeln!(si, "{}", json!({"jsonrpc":"2.0","id":7})).unwrap();
     }
     let o = hijo.wait_with_output().unwrap();
-    let l: Vec<Value> = String::from_utf8(o.stdout).unwrap().lines().map(parse).collect();
+    let l: Vec<Value> = String::from_utf8(o.stdout)
+        .unwrap()
+        .lines()
+        .map(parse)
+        .collect();
     assert_eq!(l[0]["error"]["code"], -32700);
     assert_eq!(l[1]["error"]["code"], -32600);
     assert_eq!(l[1]["id"], 7);
@@ -127,16 +153,26 @@ fn stdout_solo_json() {
 #[test]
 fn bytes_no_utf8_no_matan_el_servidor() {
     let c = ctx();
-    let mut hijo = c.comando(&["mcp"]).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    let mut hijo = c
+        .comando(&["mcp"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
     {
         let mut si = hijo.stdin.take().unwrap();
-        si.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\xff\xfe\"}\n").unwrap();
+        si.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"\xff\xfe\"}\n")
+            .unwrap();
         si.write_all(b"\xc3\x28\xff\n").unwrap();
         writeln!(si, "{}", req(2, "tools/list", json!({}))).unwrap();
     }
     let o = hijo.wait_with_output().unwrap();
     assert_eq!(o.status.code(), Some(0));
-    let l: Vec<Value> = String::from_utf8(o.stdout).unwrap().lines().map(parse).collect();
+    let l: Vec<Value> = String::from_utf8(o.stdout)
+        .unwrap()
+        .lines()
+        .map(parse)
+        .collect();
     assert_eq!(l.len(), 3);
     assert_eq!(l[0]["error"]["code"], -32601);
     assert_eq!(l[1]["error"]["code"], -32700);
