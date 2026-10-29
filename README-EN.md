@@ -36,8 +36,6 @@ The name comes from Nisaba, the Sumerian goddess of writing and scribes. The vau
 
 Download the file for your system from [Releases](https://github.com/D4vRAM369/Nisaba/releases). Every package includes the window (`nisaba-gui`) **and** the terminal tool (`nisaba`).
 
-> While the repository is private, only people with access to it can see and download the release.
-
 ### Linux
 
 | Format | Install |

@@ -34,8 +34,6 @@ El nombre viene de Nisaba, la diosa sumeria de la escritura y de los escribas. L
 
 Descarga el archivo de tu sistema desde [Releases](https://github.com/D4vRAM369/Nisaba/releases). Todos los paquetes incluyen la ventana (`nisaba-gui`) **y** la terminal (`nisaba`).
 
-> Mientras el repositorio sea privado, solo quien tenga acceso a él puede ver y descargar la release.
-
 ### Linux
 
 | Formato | Instalar |
