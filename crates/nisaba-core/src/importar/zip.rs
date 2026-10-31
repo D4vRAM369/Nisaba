@@ -35,15 +35,23 @@ pub(crate) struct Lector {
 impl Lector {
     /// Los errores de la biblioteca no se reenvían: no hacen falta y describen un archivo ajeno.
     pub fn abrir(zip: &Path, limite: u64) -> Result<Self, String> {
+        Self::abrir_con_leidos(zip, 0, limite)
+    }
+
+    pub fn abrir_con_leidos(zip: &Path, leidos: u64, limite: u64) -> Result<Self, String> {
         let archivo = File::open(zip).map_err(|e| format!("no se pudo abrir el ZIP: {e}"))?;
         let archivo = ZipArchive::new(archivo)
             .map_err(|_| "el archivo está dañado o no es un ZIP".to_string())?;
         Ok(Lector {
             archivo,
-            leidos: 0,
+            leidos,
             limite,
             actual: None,
         })
+    }
+
+    pub fn leidos(&self) -> u64 {
+        self.leidos
     }
 
     /// Un nombre que no se puede decodificar no se ofrece: ningún formato lo busca.
@@ -54,9 +62,17 @@ impl Lector {
             .collect()
     }
 
+    /// Lee los primeros bytes de una entrada para distinguir formatos que comparten nombre
+    /// (`conversations.json`), sin alterar el contador ni `actual`.
+    pub fn muestra(&mut self, nombre: &str, tope: usize) -> Option<Vec<u8>> {
+        let entrada = self.archivo.by_name(nombre).ok()?;
+        let mut buf = Vec::with_capacity(tope.min(4096));
+        entrada.take(tope as u64).read_to_end(&mut buf).ok()?;
+        Some(buf)
+    }
+
     /// Abre por nombre exacto. Es seguro con cualquier nombre (`../../evil` incluido): solo se
     /// usa para encontrar la entrada, nunca para decidir una ruta, porque nada va a disco.
-    #[allow(dead_code)] // Lo usan los formatos, que aún no están en `FORMATOS`.
     pub fn entrada(&mut self, nombre: &str) -> Result<impl Read + '_, String> {
         self.actual = Some(nombre.to_string());
         let Lector {
@@ -74,6 +90,23 @@ impl Lector {
             leidos,
             limite: *limite,
         })
+    }
+
+    /// Lee una entrada entera como texto UTF-8 aplicando tanto el tope de elemento (`1 GiB`) como
+    /// el tope total de la importación (`20 GiB`).
+    pub fn leer_cadena(&mut self, nombre: &str) -> Result<String, String> {
+        let r = self.entrada(nombre)?;
+        let usados = Cell::new(0);
+        let mut lector = PorElemento {
+            interior: r,
+            usados: &usados,
+            tope: LIMITE_ELEMENTO,
+        };
+        let mut texto = String::new();
+        lector
+            .read_to_string(&mut texto)
+            .map_err(|e| format!("no se pudo leer: {e}"))?;
+        Ok(texto)
     }
 
     /// Antepone la entrada que se estaba leyendo.
@@ -139,7 +172,6 @@ fn leer_con_tope(
 /// Cada elemento sí pasa por memoria, y por eso lleva su propio tope.
 /// Comprueba además que no haya nada detrás, y esa última lectura es la que llega al final de
 /// la entrada y hace saltar la suma de comprobación del ZIP.
-#[allow(dead_code)] // Lo usan los formatos, que aún no están en `FORMATOS`.
 pub(crate) fn recorrer_array<T: DeserializeOwned>(
     r: impl Read,
     f: impl FnMut(T) -> Result<(), String>,

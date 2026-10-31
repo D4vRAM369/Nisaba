@@ -1,0 +1,34 @@
+[
+  {
+    "uuid": "conv-1",
+    "name": "Cultivo de tomates",
+    "summary": "",
+    "created_at": "2026-03-01T10:00:00Z",
+    "updated_at": "2026-03-01T10:05:00Z",
+    "account": { "uuid": "acc-1" },
+    "chat_messages": [
+      {
+        "uuid": "m-1",
+        "parent_message_uuid": "00000000-0000-4000-8000-000000000000",
+        "sender": "human",
+        "created_at": "2026-03-01T10:00:00Z",
+        "updated_at": "2026-03-01T10:00:00Z",
+        "text": "¿Cuándo sembrar tomates?",
+        "content": [{ "type": "text", "text": "¿Cuándo sembrar tomates?" }],
+        "attachments": [],
+        "files": []
+      },
+      {
+        "uuid": "m-2",
+        "parent_message_uuid": "m-1",
+        "sender": "assistant",
+        "created_at": "2026-03-01T10:01:00Z",
+        "updated_at": "2026-03-01T10:01:00Z",
+        "text": "En primavera, tras las heladas.",
+        "content": [{ "type": "text", "text": "En primavera, tras las heladas." }],
+        "attachments": [],
+        "files": []
+      }
+    ]
+  }
+]

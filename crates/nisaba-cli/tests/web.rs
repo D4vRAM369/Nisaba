@@ -1,5 +1,4 @@
-//! Órdenes del archivo web. La bóveda y la tablilla se siembran desde `nisaba-core` porque
-//! `FORMATOS` sigue vacío: ningún ZIP puede crearlas todavía a través de la CLI.
+//! Órdenes del archivo web.
 
 mod comun;
 use comun::{ctx, Ctx};
@@ -131,6 +130,48 @@ fn archivo_ilegible(c: &Ctx) {
 fn sin_rastro_web(c: &Ctx) {
     assert!(!home(c).join(BOVEDA).exists());
     assert!(!home(c).join(TABLILLA_WEB).exists());
+}
+
+#[test]
+fn importar_crea_archivo_y_reimporta() {
+    let c = ctx();
+    let ruta = c.dir.path().join("conversations-000.zip");
+    let mut z = ZipWriter::new(fs::File::create(&ruta).unwrap());
+    z.start_file("conversations.json", SimpleFileOptions::default())
+        .unwrap();
+    z.write_all(
+        br#"[{"uuid":"cli001","name":"Desde CLI","created_at":"2026-03-01T10:00:00Z","updated_at":"2026-03-01T10:01:00Z","chat_messages":[{"uuid":"m1","sender":"human","created_at":"2026-03-01T10:00:00Z","content":[{"type":"text","text":"subtitulos desde zip"}]}]}]"#,
+    )
+    .unwrap();
+    z.finish().unwrap();
+
+    // Si no confirma haber guardado el código, no crea nada.
+    let o = con_entrada(
+        &c,
+        &["importar", ruta.to_str().unwrap()],
+        &lineas(&[CONTRASENA, CONTRASENA, "no"]),
+    );
+    assert_eq!(o.status.code(), Some(1));
+    sin_rastro_web(&c);
+
+    // Con confirmación "guardado", crea la bóveda, importa y avisa de que el ZIP original sigue sin cifrar.
+    let o = con_entrada(
+        &c,
+        &["importar", ruta.to_str().unwrap()],
+        &lineas(&[CONTRASENA, CONTRASENA, "guardado"]),
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(out(&o).contains("1 nuevas"), "{}", out(&o));
+    assert!(out(&o).contains("sin cifrar"), "{}", out(&o));
+
+    // Segunda importación: ya existe la bóveda, solo pide la contraseña una vez.
+    let o = con_entrada(
+        &c,
+        &["importar", ruta.to_str().unwrap()],
+        &lineas(&[CONTRASENA]),
+    );
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(out(&o).contains("1 sin cambios"), "{}", out(&o));
 }
 
 #[test]

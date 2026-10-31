@@ -1,10 +1,11 @@
 //! Importación de exportaciones web a la tablilla cifrada.
 
+pub mod claude_web;
 pub mod fusion;
 mod zip;
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, ErrorCode, TransactionBehavior};
 
@@ -25,47 +26,122 @@ pub struct Resumen {
 /// Por donde un formato entrega cada conversación.
 pub(crate) type Salida<'a> = &'a mut dyn FnMut(ConversacionImportada) -> Result<(), String>;
 
-/// Un origen de exportación: cómo reconocerlo por sus nombres y cómo leerlo. `leer` entrega cada
-/// conversación según sale, sin acumularlas.
+/// Un origen de exportación: cómo reconocerlo y cómo leerlo. `leer` entrega cada conversación
+/// según sale, sin acumularlas.
 pub(crate) struct Formato {
     pub nombre: &'static str,
-    pub reconoce: fn(&[String]) -> bool,
+    pub reconoce: fn(&mut Lector) -> bool,
     pub leer: fn(&mut Lector, Salida<'_>, &mut Vec<String>) -> Result<(), String>,
 }
 
-pub(crate) const FORMATOS: &[Formato] = &[];
+pub(crate) const FORMATOS: &[Formato] = &[claude_web::FORMATO];
 
-pub fn importar(conn: &mut Connection, zip: &Path) -> Result<Resumen, String> {
-    importar_con(conn, zip, FORMATOS)
+const ERROR_DESCONOCIDO: &str =
+    "formato desconocido: no es una exportación de Claude.ai ni de ChatGPT";
+
+pub fn importar(conn: &mut Connection, ruta: &Path) -> Result<Resumen, String> {
+    importar_con(conn, ruta, FORMATOS)
 }
 
 /// Comprueba el formato sin escribir: la CLI y la GUI lo llaman antes de crear el archivo.
-pub fn reconocer(zip: &Path) -> Result<&'static str, String> {
-    reconocer_con(zip, FORMATOS)
+pub fn reconocer(ruta: &Path) -> Result<&'static str, String> {
+    reconocer_con(ruta, FORMATOS)
 }
 
-fn reconocer_con(zip: &Path, formatos: &[Formato]) -> Result<&'static str, String> {
-    let lector = Lector::abrir(zip, LIMITE_TOTAL)?;
-    Ok(detectar(&lector, formatos)?.nombre)
+fn es_light_metadata(ruta: &Path) -> bool {
+    ruta.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|n| n.starts_with("light_metadata"))
+}
+
+fn prioridad_archivo(ruta: &Path) -> (u8, String) {
+    let nombre = ruta
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+    let orden = if nombre.starts_with("projects") {
+        0
+    } else if nombre.starts_with("memories") {
+        1
+    } else if nombre.starts_with("frames") {
+        2
+    } else if nombre.starts_with("design_chats") {
+        3
+    } else if nombre.starts_with("conversations") {
+        4
+    } else {
+        5
+    };
+    (orden, nombre)
+}
+
+type ArchivosReconocidos<'a> = (Vec<(PathBuf, &'a Formato)>, Vec<String>);
+
+fn recolectar_carpeta<'a>(
+    carpeta: &Path,
+    formatos: &'a [Formato],
+) -> Result<ArchivosReconocidos<'a>, String> {
+    let entradas =
+        std::fs::read_dir(carpeta).map_err(|e| format!("no se pudo leer la carpeta: {e}"))?;
+    let mut archivos = vec![];
+    for entrada in entradas {
+        let entrada = entrada.map_err(|e| format!("no se pudo leer la carpeta: {e}"))?;
+        let ruta = entrada.path();
+        if ruta.is_file() {
+            archivos.push(ruta);
+        }
+    }
+    archivos.sort_by_key(|r| prioridad_archivo(r));
+
+    let mut reconocidos = vec![];
+    let mut avisos = vec![];
+    for ruta in archivos {
+        if es_light_metadata(&ruta) {
+            avisos.push("se omitió light_metadata (datos de cuenta)".to_string());
+            continue;
+        }
+        let Ok(mut lector) = Lector::abrir(&ruta, LIMITE_TOTAL) else {
+            avisos.push("se omitió un archivo no reconocido en la carpeta".to_string());
+            continue;
+        };
+        match detectar(&mut lector, formatos) {
+            Ok(formato) => reconocidos.push((ruta, formato)),
+            Err(_) => avisos.push("se omitió un archivo no reconocido en la carpeta".to_string()),
+        }
+    }
+    if reconocidos.is_empty() {
+        return Err(ERROR_DESCONOCIDO.to_string());
+    }
+    Ok((reconocidos, avisos))
+}
+
+fn reconocer_con<'a>(ruta: &Path, formatos: &'a [Formato]) -> Result<&'a str, String> {
+    if es_light_metadata(ruta) {
+        return Err(ERROR_DESCONOCIDO.to_string());
+    }
+    if ruta.is_dir() {
+        let (reconocidos, _) = recolectar_carpeta(ruta, formatos)?;
+        return Ok(reconocidos[0].1.nombre);
+    }
+    let mut lector = Lector::abrir(ruta, LIMITE_TOTAL)?;
+    Ok(detectar(&mut lector, formatos)?.nombre)
 }
 
 /// El mensaje es fijo: los nombres de un ZIP desconocido son contenido del usuario.
-fn detectar<'a>(lector: &Lector, formatos: &'a [Formato]) -> Result<&'a Formato, String> {
-    let nombres = lector.nombres();
+fn detectar<'a>(lector: &mut Lector, formatos: &'a [Formato]) -> Result<&'a Formato, String> {
     formatos
         .iter()
-        .find(|f| (f.reconoce)(&nombres))
-        .ok_or_else(|| {
-            "formato desconocido: no es una exportación de Claude.ai ni de ChatGPT".to_string()
-        })
+        .find(|f| (f.reconoce)(lector))
+        .ok_or_else(|| ERROR_DESCONOCIDO.to_string())
 }
 
 pub(crate) fn importar_con(
     conn: &mut Connection,
-    zip: &Path,
+    ruta: &Path,
     formatos: &[Formato],
 ) -> Result<Resumen, String> {
-    importar_hasta(conn, zip, formatos, LIMITE_TOTAL)
+    importar_hasta(conn, ruta, formatos, LIMITE_TOTAL)
 }
 
 /// Cada conversación se fusiona al salir del lector, sin acumularlas en memoria, dentro de una
@@ -75,7 +151,7 @@ pub(crate) fn importar_con(
 /// foto vieja de la base.
 fn importar_hasta(
     conn: &mut Connection,
-    zip: &Path,
+    ruta: &Path,
     formatos: &[Formato],
     limite: u64,
 ) -> Result<Resumen, String> {
@@ -84,8 +160,18 @@ fn importar_hasta(
         Ok(2),
         "temp_store: la conexión debe guardar los temporales en memoria"
     );
-    let mut lector = Lector::abrir(zip, limite)?;
-    let formato = detectar(&lector, formatos)?;
+    if es_light_metadata(ruta) {
+        return Err(ERROR_DESCONOCIDO.to_string());
+    }
+
+    let (archivos, avisos_carpeta) = if ruta.is_dir() {
+        recolectar_carpeta(ruta, formatos)?
+    } else {
+        let mut lector = Lector::abrir(ruta, limite)?;
+        let formato = detectar(&mut lector, formatos)?;
+        (vec![(ruta.to_path_buf(), formato)], vec![])
+    };
+
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| match e.sqlite_error_code() {
@@ -98,13 +184,29 @@ fn importar_hasta(
     let mut resumen = Resumen::default();
     let mut vistas = 0;
     let mut sin_repetir = HashSet::new();
-    let mut anotar = |avisos: &mut Vec<String>, aviso: String| {
-        if sin_repetir.insert(aviso.clone()) {
-            avisos.push(aviso);
-        }
-    };
-    let mut guardar = |c: ConversacionImportada| {
+    let mut avisos_pendientes = avisos_carpeta;
+
+    let mut guardar = |mut c: ConversacionImportada| {
         vistas += 1;
+        if let Some(uuid) = c
+            .proyecto
+            .as_deref()
+            .and_then(|p| p.strip_prefix("uuid:"))
+            .map(str::to_string)
+        {
+            let exacto = format!("project-{uuid}");
+            let prefijo = format!("project-{uuid}:%");
+            c.proyecto = tx
+                .query_row(
+                    "SELECT proyecto FROM conversaciones
+                     WHERE fuente = ?1 AND (id_original = ?2 OR id_original LIKE ?3)
+                       AND proyecto IS NOT NULL
+                     LIMIT 1",
+                    rusqlite::params![c.base.fuente.as_str(), exacto, prefijo],
+                    |f| f.get::<_, String>(0),
+                )
+                .ok();
+        }
         let efecto = fusionar(&tx, &c)
             .map_err(|e| format!("no se pudo guardar la n.º {vistas}: {}", motivo(&e)))?;
         match efecto {
@@ -113,15 +215,24 @@ fn importar_hasta(
             Efecto::Versionada => resumen.versionadas += 1,
             Efecto::Igual => resumen.iguales += 1,
         }
-        for aviso in c.base.avisos {
-            anotar(&mut resumen.avisos, aviso);
-        }
+        avisos_pendientes.extend(c.base.avisos);
         Ok(())
     };
+
     let mut del_formato = vec![];
-    (formato.leer)(&mut lector, &mut guardar, &mut del_formato).map_err(|e| lector.situar(e))?;
-    for aviso in del_formato {
-        anotar(&mut resumen.avisos, aviso);
+    let mut leidos = 0;
+    for (zip_ruta, formato) in archivos {
+        let mut lector = Lector::abrir_con_leidos(&zip_ruta, leidos, limite)?;
+        (formato.leer)(&mut lector, &mut guardar, &mut del_formato)
+            .map_err(|e| lector.situar(e))?;
+        leidos = lector.leidos();
+    }
+    drop(guardar);
+
+    for aviso in avisos_pendientes.into_iter().chain(del_formato) {
+        if sin_repetir.insert(aviso.clone()) {
+            resumen.avisos.push(aviso);
+        }
     }
 
     tx.commit()
@@ -197,8 +308,8 @@ mod tests {
         }
     }
 
-    fn tiene_entrada(nombres: &[String]) -> bool {
-        nombres.iter().any(|n| n == ENTRADA)
+    fn tiene_entrada(l: &mut Lector) -> bool {
+        l.nombres().iter().any(|n| n == ENTRADA)
     }
 
     fn leer_filas(l: &mut Lector, salida: Salida, avisos: &mut Vec<String>) -> Result<(), String> {
