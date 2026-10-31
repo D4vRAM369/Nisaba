@@ -466,7 +466,7 @@ fn leer_de(
     })
 }
 
-/// Versiones anteriores de una conversación web, de la más antigua a la más reciente.
+/// Versiones anteriores de una conversación web, por orden de llegada (`importada`).
 /// Solo en la tablilla web: la local no tiene `version_de`.
 pub fn versiones(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<Vec<Version>> {
     let mut stmt = conn.prepare(

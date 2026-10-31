@@ -153,6 +153,8 @@ pub struct ConversacionImportada {
     pub titulo: Option<String>,
     pub proyecto: Option<String>,
     pub inicio: Option<String>,
+    /// Última actualización de la conversación según la exportación (ISO 8601), no la hora del
+    /// último mensaje: decide si lo que llega es un ZIP viejo. Si no se conoce, `None`.
     pub fin: Option<String>,
     pub tipo: TipoWeb,
     /// El JSON tal cual llegó, para interpretar en el futuro lo que hoy no se lee.
