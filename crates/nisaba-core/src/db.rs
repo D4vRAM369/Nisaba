@@ -168,6 +168,19 @@ mod tests {
     }
 
     #[test]
+    fn tablilla_normal_sin_llave_sigue_siendo_sqlite() {
+        // SQLCipher sin llave debe comportarse como SQLite normal: así las
+        // tablillas locales de siempre siguen abriéndose sin migrar nada.
+        let dir = tempfile::tempdir().unwrap();
+        let ruta = dir.path().join("tablilla.db");
+        let con = abrir(&ruta).unwrap();
+        sembrar(&con);
+        drop(con); // al cerrar, el WAL se vuelca al archivo principal
+        let cabecera = std::fs::read(&ruta).unwrap();
+        assert!(cabecera.starts_with(b"SQLite format 3"));
+    }
+
+    #[test]
     fn borrar_conversacion_borra_fts() {
         let dir = tempfile::tempdir().unwrap();
         let con = abrir(&dir.path().join("tablilla.db")).unwrap();
