@@ -284,6 +284,8 @@ pub fn comando_continuar(
             "cd '{}' && claude --resume {id_original}",
             c.replace('\'', "'\\''")
         ),
+        // Una conversación de la web no se reanuda desde la terminal.
+        (Fuente::ClaudeWeb | Fuente::ChatGpt, _) => return None,
     })
 }
 
@@ -432,6 +434,8 @@ mod tests {
             "codex resume 019a-cx"
         );
         assert_eq!(comando_continuar(Fuente::Codex, "", None, false), None);
+        assert_eq!(comando_continuar(Fuente::ClaudeWeb, "x", None, false), None);
+        assert_eq!(comando_continuar(Fuente::ChatGpt, "x", None, true), None);
     }
 
     #[test]

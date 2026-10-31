@@ -44,6 +44,10 @@ pub struct Resultado {
     /// Carpeta de trabajo de la sesión (madre, si es un subagente).
     pub cwd: Option<String>,
     pub id_original: String,
+    /// Lo mismo por lo que ordena `buscar_sin_contar` (negativo, menor es mejor);
+    /// sirve para mezclar resultados de dos archivos. No sale en el JSON.
+    #[serde(skip)]
+    pub puntuacion: f64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -280,6 +284,7 @@ pub fn buscar_sin_contar(
 
     let mut resultados = Vec::with_capacity(ordenados.len());
     for (_, g) in ordenados {
+        let puntuacion = puntaje(&g);
         let fragmento: String = conn.query_row(
             "SELECT snippet(partes_fts, 0, '«', '»', '…', 12) FROM partes_fts
              WHERE partes_fts MATCH ?1 AND rowid = ?2",
@@ -300,6 +305,7 @@ pub fn buscar_sin_contar(
             orden_mensaje: g.orden,
             cwd: g.cwd,
             id_original: g.id_original,
+            puntuacion,
         });
     }
 
@@ -315,6 +321,29 @@ pub fn buscar_sin_contar(
         total_sesiones,
         sugerencia,
     })
+}
+
+/// Une la respuesta del archivo local con la del archivo web: ordena por
+/// `puntuacion` (más negativa primero; en empate, el local), recorta a `limite`
+/// y suma los totales. La sugerencia es la del local y solo se conserva si no
+/// queda ningún resultado.
+pub fn mezclar(local: Respuesta, web: Respuesta, limite: usize) -> Respuesta {
+    let total_sesiones = local.total_sesiones + web.total_sesiones;
+    let mut resultados = local.resultados;
+    resultados.extend(web.resultados);
+    // Orden estable: ante un empate se mantiene el local primero.
+    resultados.sort_by(|a, b| a.puntuacion.total_cmp(&b.puntuacion));
+    resultados.truncate(limite);
+    let sugerencia = if resultados.is_empty() {
+        local.sugerencia
+    } else {
+        None
+    };
+    Respuesta {
+        resultados,
+        total_sesiones,
+        sugerencia,
+    }
 }
 
 /// Los ids de Codex (UUIDv7) y de subagentes (`agent-…`) comparten el comienzo:
@@ -355,23 +384,22 @@ pub fn resolver(conn: &Connection, id_publico_txt: &str) -> rusqlite::Result<Res
     let Some((prefijo, resto)) = id_publico_txt.split_once('-') else {
         return Ok(Resolucion::Ninguno);
     };
-    let Some(fuente) = [Fuente::ClaudeCode, Fuente::Codex]
-        .into_iter()
-        .find(|f| f.prefijo() == prefijo)
-    else {
+    let Some(fuente) = Fuente::TODAS.into_iter().find(|f| f.prefijo() == prefijo) else {
         return Ok(Resolucion::Ninguno);
     };
     if resto.is_empty() {
         return Ok(Resolucion::Ninguno);
     }
     // substr en vez de LIKE: los ids pueden llevar `_` o `%`.
+    // Las versiones anteriores comparten comienzo y tienen ids más bajos: van al final para que
+    // el límite no deje fuera la conversación vigente.
     let mut stmt = conn.prepare(
-        "SELECT id, id_original, id IN (SELECT id FROM conversaciones_visibles)
+        "SELECT id, id_original, id IN (SELECT id FROM conversaciones_visibles) AS visible
          FROM conversaciones
          WHERE fuente = ?1
            AND CASE WHEN fuente = 'codex' OR substr(id_original, 1, 6) = 'agent-'
                     THEN substr(id_original, -?3) ELSE substr(id_original, 1, ?3) END = ?2
-         ORDER BY id LIMIT 5",
+         ORDER BY fuente IN ('claude-web','chatgpt') AND NOT visible, id LIMIT 5",
     )?;
     let todas: Vec<(i64, String, bool)> = stmt
         .query_map(
@@ -385,7 +413,8 @@ pub fn resolver(conn: &Connection, id_publico_txt: &str) -> rusqlite::Result<Res
         .map(|(id, o, _)| (*id, o.clone()))
         .collect();
     Ok(match filas.len() {
-        0 if !todas.is_empty() => Resolucion::Excluida,
+        // En la web lo invisible es una versión anterior: nadie la excluyó.
+        0 if !todas.is_empty() && !fuente.es_web() => Resolucion::Excluida,
         0 => Resolucion::Ninguno,
         1 => Resolucion::Uno(filas[0].0),
         _ => Resolucion::Ambiguo(
@@ -425,7 +454,8 @@ pub fn recientes_desde(
     f: &Filtros,
     desplazamiento: usize,
 ) -> rusqlite::Result<Respuesta> {
-    const CONDICION: &str = "c.padre_id IS NULL AND c.fuente IN ('claude-code','codex')
+    const CONDICION: &str =
+        "c.padre_id IS NULL AND c.fuente IN ('claude-code','codex','claude-web','chatgpt')
         AND (?1 IS NULL OR c.fuente=?1)
         AND (?2 IS NULL OR c.proyecto=?2)
         AND (?3 IS NULL OR c.fin>=?3)";
@@ -466,6 +496,7 @@ pub fn recientes_desde(
                     orden_mensaje: 0,
                     cwd: r.get(6)?,
                     id_original: id,
+                    puntuacion: 0.0,
                 })
             },
         )?
@@ -475,4 +506,135 @@ pub fn recientes_desde(
         total_sesiones,
         sugerencia: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::archivo_web;
+    use crate::boveda::LlaveMaestra;
+    use crate::modelo::es_id_web;
+    use rusqlite::Connection;
+
+    fn sembrar(con: &Connection, fuente: &str, id_original: &str) -> i64 {
+        con.execute(
+            "INSERT INTO conversaciones(fuente, id_original) VALUES (?1, ?2)",
+            [fuente, id_original],
+        )
+        .unwrap();
+        con.last_insert_rowid()
+    }
+
+    fn resultado(id: &str, puntuacion: f64) -> Resultado {
+        Resultado {
+            id_publico: format!("cc-{id}"),
+            titulo: id.to_string(),
+            fuente: Fuente::ClaudeCode,
+            proyecto: None,
+            fin: None,
+            coincidencias: 1,
+            fragmento: String::new(),
+            orden_mensaje: 0,
+            cwd: None,
+            id_original: id.to_string(),
+            puntuacion,
+        }
+    }
+
+    fn respuesta(rs: Vec<Resultado>, total: i64, sugerencia: Option<&str>) -> Respuesta {
+        Respuesta {
+            resultados: rs,
+            total_sesiones: total,
+            sugerencia: sugerencia.map(String::from),
+        }
+    }
+
+    fn ids(r: &Respuesta) -> Vec<&str> {
+        r.resultados.iter().map(|x| x.titulo.as_str()).collect()
+    }
+
+    #[test]
+    fn mezclar_ordena_por_puntuacion() {
+        let local = respuesta(vec![resultado("l1", -1.0), resultado("l2", -5.0)], 2, None);
+        let web = respuesta(vec![resultado("w1", -3.0), resultado("w2", -5.0)], 2, None);
+        let m = mezclar(local, web, 10);
+        // Empate a -5.0: gana el local.
+        assert_eq!(ids(&m), ["l2", "w2", "w1", "l1"]);
+    }
+
+    #[test]
+    fn mezclar_respeta_limite() {
+        let local = respuesta(vec![resultado("l1", -4.0), resultado("l2", -2.0)], 2, None);
+        let web = respuesta(vec![resultado("w1", -3.0)], 1, None);
+        let m = mezclar(local, web, 2);
+        assert_eq!(ids(&m), ["l1", "w1"]);
+    }
+
+    #[test]
+    fn mezclar_suma_totales() {
+        let local = respuesta(vec![resultado("l1", -1.0)], 7, Some("local"));
+        let web = respuesta(vec![resultado("w1", -2.0)], 5, Some("web"));
+        let m = mezclar(local, web, 10);
+        assert_eq!(m.total_sesiones, 12);
+        // Hay resultados: la sugerencia se descarta.
+        assert_eq!(m.sugerencia, None);
+
+        let vacio = mezclar(
+            respuesta(vec![], 0, Some("local")),
+            respuesta(vec![], 0, Some("web")),
+            10,
+        );
+        assert_eq!(vacio.sugerencia.as_deref(), Some("local"));
+    }
+
+    #[test]
+    fn salida_json_no_incluye_puntuacion() {
+        let json = serde_json::to_string(&resultado("a", -2.5)).unwrap();
+        assert!(!json.contains("puntuacion"));
+    }
+
+    #[test]
+    fn prefijos_web_resuelven() {
+        let dir = tempfile::tempdir().unwrap();
+        let con = archivo_web::abrir(dir.path(), &LlaveMaestra::de_prueba(41)).unwrap();
+        let cw = sembrar(&con, "claude-web", "aaaa1111-resto");
+        let gpt = sembrar(&con, "chatgpt", "bbbb2222-resto");
+        assert_eq!(
+            id_publico(Fuente::ClaudeWeb, "aaaa1111-resto"),
+            "cw-aaaa1111"
+        );
+        assert_eq!(
+            id_publico(Fuente::ChatGpt, "bbbb2222-resto"),
+            "gpt-bbbb2222"
+        );
+        assert_eq!(resolver(&con, "cw-aaaa1111").unwrap(), Resolucion::Uno(cw));
+        assert_eq!(
+            resolver(&con, "gpt-bbbb2222").unwrap(),
+            Resolucion::Uno(gpt)
+        );
+        assert_eq!(resolver(&con, "cw-bbbb2222").unwrap(), Resolucion::Ninguno);
+        assert_eq!(resolver(&con, "cc-aaaa1111").unwrap(), Resolucion::Ninguno);
+    }
+
+    #[test]
+    fn es_id_web_distingue_prefijos() {
+        assert!(es_id_web("cw-aaaa1111"));
+        assert!(es_id_web("gpt-aaaa1111"));
+        assert!(!es_id_web("cc-aaaa1111"));
+        assert!(!es_id_web("cx-aaaa1111"));
+        assert!(!es_id_web("cwaaaa1111"));
+        assert!(!es_id_web("gptx-aaaa1111"));
+        assert!(!es_id_web(""));
+    }
+
+    #[test]
+    fn fuentes_de_ida_y_vuelta() {
+        for f in Fuente::TODAS {
+            assert_eq!(Fuente::desde_str(f.as_str()), Some(f));
+        }
+        assert_eq!(Fuente::desde_str("claude-web"), Some(Fuente::ClaudeWeb));
+        assert_eq!(Fuente::desde_str("chatgpt"), Some(Fuente::ChatGpt));
+        assert!(!Fuente::ClaudeCode.es_web() && !Fuente::Codex.es_web());
+        assert!(Fuente::ClaudeWeb.es_web() && Fuente::ChatGpt.es_web());
+    }
 }

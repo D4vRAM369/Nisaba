@@ -1,6 +1,6 @@
 <script lang="ts">
   import { textos } from '../lib/textos';
-  import { llamar, type Documento } from '../lib/api';
+  import { llamar, esIdWeb, type Documento } from '../lib/api';
   import { renderizar } from '../lib/markdown';
   let { idPublico, todo }: { idPublico: string; todo: boolean } = $props();
   let pendiente = $state<{ doc: Documento; formato: 'md' | 'pdf' } | null>(null);
@@ -16,9 +16,12 @@
   }
   async function sacar(doc: Documento, formato: 'md' | 'pdf') {
     pendiente = null;
-    if (formato === 'pdf') return imprimir(doc);
+    if (formato === 'pdf') {
+      if (esIdWeb(idPublico)) aviso = textos.avisoExportarWeb;
+      return imprimir(doc);
+    }
     const ruta = await llamar<string | null>('guardar_como', { nombre: doc.nombre_md, contenido: doc.markdown });
-    if (ruta) aviso = textos.guardadoEn(ruta);
+    if (ruta) aviso = esIdWeb(idPublico) ? textos.guardadoSinCifrar(ruta) : textos.guardadoEn(ruta);
   }
   // El HTML sale saneado por `renderizar`; la hoja @media print solo deja ver #impresion.
   function imprimir(doc: Documento) {
@@ -39,7 +42,7 @@
 {#if pendiente}
   <div class="confirmacion" role="alertdialog" aria-labelledby="secretos-titulo">
     <h3 id="secretos-titulo">{textos.secretosTitulo(pendiente.doc.secretos.length)}</h3>
-    <p>{textos.secretosDetalle}</p>
+    <p>{textos.secretosDetalle}{#if esIdWeb(idPublico)} {textos.avisoExportarWeb}{/if}</p>
     <ul>{#each pendiente.doc.secretos as h}<li><strong>{h.tipo}</strong> <code>{h.muestra}</code></li>{/each}</ul>
     <div class="acciones"><button class="boton-secundario" onclick={() => pendiente = null}>{textos.cancelar}</button><button class="boton-peligro" onclick={() => sacar(pendiente!.doc, pendiente!.formato).catch(e => aviso = String(e))}>{textos.exportarIgualmente}</button></div>
   </div>

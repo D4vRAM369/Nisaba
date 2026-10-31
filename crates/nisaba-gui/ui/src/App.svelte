@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { textos } from './lib/textos';
-  import { buscar, llamar, escuchar, escritorio, type Respuesta, type Filtros as Opciones, type Resultado, type EstadoIndexacion } from './lib/api';
+  import { buscar, llamar, escuchar, escritorio, estadoArchivo, type Respuesta, type Filtros as Opciones, type Resultado, type EstadoIndexacion, type EstadoArchivo } from './lib/api';
   import Buscador from './componentes/Buscador.svelte';
   import Filtros from './componentes/Filtros.svelte';
   import ListaResultados from './componentes/ListaResultados.svelte';
@@ -9,6 +9,7 @@
   import Lector from './componentes/Lector.svelte';
   import Salud from './componentes/Salud.svelte';
   import Ajustes from './componentes/Ajustes.svelte';
+  import Archivo from './componentes/Archivo.svelte';
   let consulta = $state('');
   let filtros = $state<Opciones>({ razonamiento: false, codigo: false, limite: 30 });
   let respuesta = $state<Respuesta>({ resultados: [], total_sesiones: 0, sugerencia: null });
@@ -16,8 +17,10 @@
   let alrededorDe = $state<number | undefined>(undefined);
   let mostrarSalud = $state(false);
   let mostrarAjustes = $state(false);
+  let mostrarArchivo = $state(false);
+  let estadoWeb = $state<EstadoArchivo>('no_existe');
   let propuesta = $state<string | null>(null);
-  function noIndexar(carpeta: string) { propuesta = carpeta; mostrarAjustes = true; mostrarSalud = false; }
+  function noIndexar(carpeta: string) { propuesta = carpeta; mostrarAjustes = true; mostrarSalud = false; mostrarArchivo = false; }
   let pendiente = $state(false);
   let error = $state<string | null>(null);
   let proyectos = $state<string[]>([]);
@@ -54,11 +57,21 @@
     return () => clearTimeout(temporizador);
   });
   function abrir(r: Resultado) {
-    seleccionado = r.id_publico; alrededorDe = consulta.trim() ? r.orden_mensaje : undefined; mostrarSalud = false; mostrarAjustes = false;
+    seleccionado = r.id_publico; alrededorDe = consulta.trim() ? r.orden_mensaje : undefined; mostrarSalud = false; mostrarAjustes = false; mostrarArchivo = false;
     // Una búsqueda cuenta para la métrica de éxito cuando abres lo que encontró, no a cada pausa al escribir.
     if (consulta.trim()) void llamar('contar_busqueda').catch(e => { error = String(e); });
   }
-  function abrirId(id: string) { seleccionado = id; alrededorDe = undefined; mostrarSalud = false; mostrarAjustes = false; }
+  function abrirId(id: string) { seleccionado = id; alrededorDe = undefined; mostrarSalud = false; mostrarAjustes = false; mostrarArchivo = false; }
+  function alCambiarArchivo(nuevo: EstadoArchivo) {
+    estadoWeb = nuevo;
+    void buscarAhora();
+    void llamar<string[]>('proyectos').then(p => { proyectos = p; }).catch(e => { error = String(e); });
+  }
+  function iconoArchivo(e: EstadoArchivo): string {
+    if (e === 'desbloqueado') return '🔓';
+    if (e === 'bloqueado') return '🔒';
+    return '🗝';
+  }
   onMount(() => {
     let cerrado = false;
     const cancelar: (() => void)[] = [];
@@ -71,6 +84,7 @@
         if (cerrado) { abrirOff(); return; } cancelar.push(abrirOff);
         const inicial = await llamar<string | null>('apertura_inicial');
         if (inicial) abrirId(inicial);
+        estadoWeb = await estadoArchivo();
         estado = await llamar<EstadoIndexacion>('iniciar');
         proyectos = await llamar<string[]>('proyectos');
       } catch (e) { if (!cerrado) error = String(e); }
@@ -79,9 +93,18 @@
   });
 </script>
 <div class="app">
-  <header class="cabecera-app"><div class="marca"><span class="glifos" aria-hidden="true">{textos.glifos}</span><div><h1>{textos.nombre}</h1><p>{textos.tablilla}</p></div></div><div class="botones-app"><button class="boton-salud" class:activo={mostrarAjustes} onclick={() => { propuesta = null; mostrarAjustes = !mostrarAjustes; mostrarSalud = false; }}>{mostrarAjustes ? textos.volver : textos.ajustes} <span aria-hidden="true">⚙</span></button><button class="boton-salud" class:activo={mostrarSalud} onclick={() => { mostrarSalud = !mostrarSalud; mostrarAjustes = false; }}>{mostrarSalud ? textos.volver : textos.salud} <span aria-hidden="true">◇</span></button></div></header>
+  <header class="cabecera-app">
+    <div class="marca"><span class="glifos" aria-hidden="true">{textos.glifos}</span><div><h1>{textos.nombre}</h1><p>{textos.tablilla}</p></div></div>
+    <div class="botones-app">
+      <button class="boton-salud" class:activo={mostrarArchivo} class:desbloqueado={estadoWeb === 'desbloqueado'} onclick={() => { mostrarArchivo = !mostrarArchivo; mostrarAjustes = false; mostrarSalud = false; }}>
+        {mostrarArchivo ? textos.volver : textos.archivoWeb} <span aria-hidden="true">{iconoArchivo(estadoWeb)}</span>
+      </button>
+      <button class="boton-salud" class:activo={mostrarAjustes} onclick={() => { propuesta = null; mostrarAjustes = !mostrarAjustes; mostrarSalud = false; mostrarArchivo = false; }}>{mostrarAjustes ? textos.volver : textos.ajustes} <span aria-hidden="true">⚙</span></button>
+      <button class="boton-salud" class:activo={mostrarSalud} onclick={() => { mostrarSalud = !mostrarSalud; mostrarAjustes = false; mostrarArchivo = false; }}>{mostrarSalud ? textos.volver : textos.salud} <span aria-hidden="true">◇</span></button>
+    </div>
+  </header>
   <main class="columnas"><aside class="explorador" aria-label={textos.buscar}><div class="busqueda-controles"><Buscador bind:consulta buscar={buscarAhora} /><Filtros bind:filtros {proyectos} /></div><ListaResultados {respuesta} {consulta} {pendiente} {seleccionado} {abrir} {cargarMas} /></aside>
-    <section class="lector" aria-label={textos.selecciona}>{#if mostrarSalud}<Salud />{:else if mostrarAjustes}{#key propuesta}<Ajustes {propuesta} hecho={() => { propuesta = null; void buscarAhora(); }} />{/key}{:else if seleccionado}{#key seleccionado}<Lector idPublico={seleccionado} {alrededorDe} abrir={abrirId} {noIndexar} />{/key}{:else}<div class="lector-vacio"><span class="sello glifos" aria-hidden="true">{textos.glifos}</span><h2>{textos.lectorVacio}</h2><p>{textos.lectorVacioDetalle}</p><div class="linea-oro"></div><small>{textos.descripcion}</small></div>{/if}</section>
+    <section class="lector" aria-label={textos.selecciona}>{#if mostrarArchivo}<Archivo bind:estado={estadoWeb} cambio={alCambiarArchivo} />{:else if mostrarSalud}<Salud />{:else if mostrarAjustes}{#key propuesta}<Ajustes {propuesta} hecho={() => { propuesta = null; void buscarAhora(); }} />{/key}{:else if seleccionado}{#key seleccionado}<Lector idPublico={seleccionado} {alrededorDe} abrir={abrirId} {noIndexar} />{/key}{:else}<div class="lector-vacio"><span class="sello glifos" aria-hidden="true">{textos.glifos}</span><h2>{textos.lectorVacio}</h2><p>{textos.lectorVacioDetalle}</p><div class="linea-oro"></div><small>{textos.descripcion}</small></div>{/if}</section>
   </main>
   {#if error}<div class="error-global" role="alert">{error}</div>{/if}
   <BarraEstado {estado} />

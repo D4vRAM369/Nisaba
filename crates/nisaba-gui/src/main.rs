@@ -3,6 +3,7 @@
 use tauri::{Emitter, Manager};
 
 mod aperturas;
+mod archivo;
 mod comandos;
 mod indexacion;
 
@@ -41,7 +42,13 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(aperturas)
+        .manage(archivo::Archivo::default())
         .manage(indexacion::Indexacion::default())
+        .on_window_event(|ventana, evento| {
+            if matches!(evento, tauri::WindowEvent::Destroyed) {
+                archivo::bloquear_en(ventana.state::<archivo::Archivo>().inner());
+            }
+        })
         .setup(|app| {
             app.state::<indexacion::Indexacion>()
                 .iniciar(app.handle().clone());
@@ -65,6 +72,20 @@ fn main() {
             comandos::quitar_exclusion,
             comandos::proyectos_con_carpeta,
             comandos::elegir_carpeta,
+            archivo::estado_archivo,
+            archivo::preparar_archivo,
+            archivo::confirmar_archivo,
+            archivo::desbloquear,
+            archivo::bloquear,
+            archivo::recuperar_archivo,
+            archivo::cambiar_contrasena,
+            archivo::importar_zip,
+            archivo::elegir_zip,
+            archivo::elegir_carpeta_importacion,
+            archivo::versiones,
+            archivo::leer_version,
+            archivo::detalles_web,
+            archivo::leer_rama,
             indexacion::iniciar,
             indexacion::estado_indexacion,
             aperturas::apertura_inicial

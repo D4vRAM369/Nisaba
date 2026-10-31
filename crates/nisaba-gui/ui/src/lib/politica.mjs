@@ -14,3 +14,11 @@ export function formatearFecha(valor, opciones, alternativo) {
   const instante = new Date(valor);
   return Number.isNaN(instante.getTime()) ? alternativo : new Intl.DateTimeFormat('es', opciones).format(instante);
 }
+/** @param {string|null|undefined} id */
+export function esIdWeb(id) {
+  return typeof id === 'string' && (id.startsWith('cw-') || id.startsWith('gpt-'));
+}
+/** @param {string} html @param {string} [titulo] */
+export function atributosIframeHtml(html, titulo = 'Vista previa HTML') {
+  return { sandbox: '', srcdoc: String(html ?? ''), referrerpolicy: 'no-referrer', title: titulo };
+}

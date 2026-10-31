@@ -1,14 +1,17 @@
 mod formato;
 mod mcp;
+mod web;
 
 use clap::{Parser, Subcommand};
 use formato::texto_busqueda;
-use nisaba_core::busqueda::{buscar, resolver, Filtros, Resolucion, EXCLUIDA};
+use nisaba_core::busqueda::{
+    buscar, buscar_sin_contar, mezclar, resolver, Filtros, Resolucion, EXCLUIDA,
+};
 use nisaba_core::indexador::{indexar, Progreso, ResultadoIndexado, Rutas};
-use nisaba_core::lector::{a_markdown, leer, Tramo};
-use nisaba_core::modelo::Fuente;
+use nisaba_core::lector::{a_markdown, leer, leer_version, Tramo};
+use nisaba_core::modelo::{es_id_web, Fuente};
 use nisaba_core::salud::{aviso_limpieza_claude, informe};
-use nisaba_core::{db, exclusiones, exportar};
+use nisaba_core::{db, exclusiones, exportar, importar};
 use rusqlite::Connection;
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, IsTerminal, Write};
@@ -32,7 +35,7 @@ enum Orden {
     #[command(visible_alias = "search")]
     Buscar {
         consulta: String,
-        /// claude-code | codex
+        /// claude-code | codex | claude-web | chatgpt (estas dos, con --web)
         #[arg(long, visible_alias = "source")]
         fuente: Option<String>,
         #[arg(long, visible_alias = "project")]
@@ -48,6 +51,9 @@ enum Orden {
         limite: usize,
         #[arg(long)]
         json: bool,
+        /// Busca también en el archivo web; pide la contraseña
+        #[arg(long)]
+        web: bool,
     },
     /// Muestra una conversación en Markdown
     #[command(visible_alias = "show")]
@@ -59,6 +65,9 @@ enum Orden {
         cantidad: usize,
         #[arg(long, visible_alias = "all")]
         todo: bool,
+        /// Versión anterior de una conversación del archivo web
+        #[arg(long, value_name = "N")]
+        version: Option<usize>,
     },
     /// Abre una conversación en la ventana de Nisaba
     #[command(visible_alias = "open")]
@@ -109,6 +118,15 @@ enum Orden {
     /// Búsquedas por día y canal (últimos 14 días)
     #[command(visible_alias = "usage")]
     Uso,
+    /// Guarda en el archivo web cifrado una exportación de Claude.ai o ChatGPT
+    #[command(visible_alias = "import")]
+    Importar { zip: PathBuf },
+    /// Cambia la contraseña del archivo web
+    #[command(visible_alias = "password")]
+    Contrasena,
+    /// Entra en el archivo web con el código de recuperación y pone contraseña nueva
+    #[command(visible_alias = "recover")]
+    Recuperar,
     /// Servidor MCP por stdio (para Claude Code y otros agentes)
     Mcp,
 }
@@ -136,6 +154,16 @@ fn indexar_antes(conn: &mut Connection, rutas: &Rutas) {
     }
 }
 
+/// Prepara la base en la que vive `id`: la local, al día, o el archivo web, ya desbloqueado.
+/// `None` significa la local, que quien llama ya tiene abierta.
+fn base_de(id: &str, conn: &mut Connection, rutas: &Rutas) -> Result<Option<Connection>, String> {
+    if es_id_web(id) {
+        return web::desbloquear(rutas).map(Some);
+    }
+    indexar_antes(conn, rutas);
+    Ok(None)
+}
+
 fn ejecutar(orden: Orden) -> Result<u8, String> {
     nisaba_core::comprobar_entorno()?;
     let rutas = Rutas::desde_entorno();
@@ -156,12 +184,19 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             codigo,
             limite,
             json,
+            web,
         } => {
-            let fuente = match fuente.as_deref() {
-                None => None,
-                Some(s) => Some(
-                    Fuente::desde_str(s).ok_or("fuente desconocida: usa claude-code o codex")?,
-                ),
+            let fuente =
+                match fuente.as_deref() {
+                    None => None,
+                    Some(s) => Some(Fuente::desde_str(s).ok_or(
+                        "fuente desconocida: usa claude-code, codex, claude-web o chatgpt",
+                    )?),
+                };
+            let archivo = if web {
+                web::desbloquear_si_hay(&rutas)?
+            } else {
+                None
             };
             indexar_antes(&mut conn, &rutas);
             let f = Filtros {
@@ -172,7 +207,11 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 codigo,
                 limite,
             };
-            let r = buscar(&conn, &consulta, &f, "cli").map_err(e)?;
+            let mut r = buscar(&conn, &consulta, &f, "cli").map_err(e)?;
+            if let Some(archivo) = &archivo {
+                let del_archivo = buscar_sin_contar(archivo, &consulta, &f).map_err(e)?;
+                r = mezclar(r, del_archivo, f.limite);
+            }
             if json {
                 println!(
                     "{}",
@@ -189,9 +228,16 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             desde,
             cantidad,
             todo,
+            version,
         } => {
-            indexar_antes(&mut conn, &rutas);
-            let cid = match resolver(&conn, &id).map_err(e)? {
+            if version.is_some() && !es_id_web(&id) {
+                return Err(
+                    "--version solo existe en el archivo web (ids cw-… y gpt-…).".to_string(),
+                );
+            }
+            let archivo = base_de(&id, &mut conn, &rutas)?;
+            let base = archivo.as_ref().unwrap_or(&conn);
+            let cid = match resolver(base, &id).map_err(e)? {
                 Resolucion::Uno(c) => c,
                 Resolucion::Ninguno => {
                     eprintln!("No encuentro la conversación {id}");
@@ -212,7 +258,16 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 alrededor_de: None,
                 todo,
             };
-            let l = leer(&conn, cid, &t).map_err(e)?;
+            let l = match version {
+                None => leer(base, cid, &t).map_err(e)?,
+                Some(n) => {
+                    let fila = web::fila_de_version(base, cid, &id, n)?;
+                    let mut l = leer_version(base, fila, &t).map_err(e)?;
+                    // `a_markdown` lo repite en el aviso de siguiente tramo, que debe seguir aquí.
+                    l.id_publico = format!("{id} --version {n}");
+                    l
+                }
+            };
             print!("{}", a_markdown(&l));
             Ok(0)
         }
@@ -249,8 +304,9 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             forzar,
             sobrescribir,
         } => {
-            indexar_antes(&mut conn, &rutas);
-            let doc = exportar::documento(&conn, &id, todo)?;
+            let archivo = base_de(&id, &mut conn, &rutas)?;
+            let base = archivo.as_ref().unwrap_or(&conn);
+            let doc = exportar::documento(base, &id, todo)?;
             let secretos = exportar::posibles_secretos(&doc);
             if !secretos.is_empty() && !forzar {
                 eprintln!("Posibles secretos en la conversación ({}):", secretos.len());
@@ -262,7 +318,7 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             }
             let destino = match salida {
                 Some(p) => p,
-                None => PathBuf::from(exportar::nombre_propuesto(&conn, &id, "md")?),
+                None => PathBuf::from(exportar::nombre_propuesto(base, &id, "md")?),
             };
             // `create_new` lo comprueba y lo crea de una vez: entre mirar y escribir no cabe nadie.
             let mut opciones = OpenOptions::new();
@@ -282,6 +338,9 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                     _ => format!("{}: {x}", destino.display()),
                 })?;
             println!("Guardado en {}", destino.display());
+            if archivo.is_some() {
+                eprintln!("Este archivo queda sin cifrar.");
+            }
             Ok(0)
         }
         Orden::Excluir {
@@ -406,6 +465,24 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             for (dia, canal, n) in filas {
                 println!("{dia}  {canal:<4} {n}");
             }
+            Ok(0)
+        }
+        Orden::Importar { zip } => {
+            // Antes de nada: un ZIP desconocido no pide contraseña ni deja archivo creado.
+            importar::reconocer(&zip)?;
+            let mut archivo = web::abrir_o_crear(&rutas)?;
+            let r = importar::importar(&mut archivo, &zip)?;
+            print!("{}", web::texto_importacion(&r, &zip));
+            Ok(0)
+        }
+        Orden::Contrasena => {
+            web::cambiar(&rutas)?;
+            println!("Contraseña cambiada.");
+            Ok(0)
+        }
+        Orden::Recuperar => {
+            web::recuperar(&rutas)?;
+            println!("Contraseña nueva guardada.");
             Ok(0)
         }
     }

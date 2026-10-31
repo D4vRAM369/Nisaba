@@ -76,15 +76,77 @@ pub struct Lectura {
     pub es_subagente: bool,
 }
 
-struct Msg {
+/// Una versión anterior de una conversación web.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Version {
+    pub id: i64,
+    /// Cuándo entró este contenido en el archivo (ISO, UTC).
+    pub importada: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AdjuntoWeb {
+    pub nombre: String,
+    pub tipo: Option<String>,
+    pub tamano: Option<u64>,
+    pub texto_extraido: Option<String>,
+    /// `true` cuando la exportación (p. ej. Claude.ai) no incluye el archivo original.
+    pub sin_binario: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CitaWeb {
+    pub numero: usize,
+    pub url: String,
+    pub tipo: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct HerramientaWeb {
+    pub nombre: String,
+    pub entrada: String,
+    pub resultado: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DocumentoProyecto {
+    pub id_publico: String,
+    pub titulo: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RamaWeb {
+    pub hoja: String,
+    pub hora: Option<String>,
+    pub mensajes: usize,
+    pub activa: bool,
+}
+
+/// Datos adicionales de una conversación del archivo web para el panel lateral `Detalles`.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct DetallesWeb {
+    pub tipo: String,
+    pub proyecto: Option<String>,
+    pub documentos_proyecto: Vec<DocumentoProyecto>,
+    pub adjuntos: Vec<AdjuntoWeb>,
+    pub citas: Vec<CitaWeb>,
+    pub herramientas: Vec<HerramientaWeb>,
+    pub versiones: Vec<Version>,
+    pub ramas: Vec<RamaWeb>,
+    pub html: Option<String>,
+    pub tiene_original: bool,
+}
+
+pub(crate) struct Msg {
     orden: i64,
-    uuid: Option<String>,
-    id_padre: Option<String>,
-    rol: String,
-    modelo: Option<String>,
-    hora: Option<String>,
-    oculto: bool,
-    partes: Vec<(String, String)>,
+    pub(crate) uuid: Option<String>,
+    pub(crate) id_padre: Option<String>,
+    pub(crate) rol: String,
+    pub(crate) modelo: Option<String>,
+    pub(crate) hora: Option<String>,
+    pub(crate) oculto: bool,
+    /// `(tipo, contenido)`.
+    pub(crate) partes: Vec<(String, String)>,
 }
 
 struct Hijo {
@@ -197,7 +259,10 @@ fn bloque_texto(m: &Msg, texto: String) -> Bloque {
     }
 }
 
-fn cargar_mensajes(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<Vec<Msg>> {
+pub(crate) fn cargar_mensajes(
+    conn: &Connection,
+    conversacion_id: i64,
+) -> rusqlite::Result<Vec<Msg>> {
     let mut stmt = conn.prepare(
         "SELECT m.id, m.orden, m.uuid, m.id_padre, m.rol, m.modelo, m.hora, m.oculto
          FROM mensajes m WHERE m.conversacion_id = ?1 ORDER BY m.orden",
@@ -258,6 +323,51 @@ fn cargar_hijos(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<Vec
 }
 
 pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Result<Lectura> {
+    leer_de(
+        conn,
+        "conversaciones_visibles WHERE id = ?1",
+        conversacion_id,
+        None,
+        t,
+    )
+}
+
+/// Lee una rama concreta (por uuid de su hoja) de una conversación visible.
+pub fn leer_rama(
+    conn: &Connection,
+    conversacion_id: i64,
+    hoja: &str,
+    t: &Tramo,
+) -> rusqlite::Result<Lectura> {
+    leer_de(
+        conn,
+        "conversaciones_visibles WHERE id = ?1",
+        conversacion_id,
+        Some(hoja),
+        t,
+    )
+}
+
+/// Lee una versión anterior, que `leer` no ve porque no es visible. Cualquier otra fila es un
+/// error. Solo en la tablilla web: la local no tiene `version_de`.
+pub fn leer_version(conn: &Connection, version_id: i64, t: &Tramo) -> rusqlite::Result<Lectura> {
+    leer_de(
+        conn,
+        "conversaciones WHERE id = ?1 AND version_de IS NOT NULL",
+        version_id,
+        None,
+        t,
+    )
+}
+
+/// `origen` es SQL fijo de este módulo: tabla y condición de la fila que se puede leer.
+fn leer_de(
+    conn: &Connection,
+    origen: &str,
+    conversacion_id: i64,
+    hoja_forzada: Option<&str>,
+    t: &Tramo,
+) -> rusqlite::Result<Lectura> {
     #[allow(clippy::type_complexity)]
     let (fuente, id_original, titulo, hoja, cwd, es_subagente): (
         String,
@@ -267,8 +377,9 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
         Option<String>,
         bool,
     ) = conn.query_row(
-        "SELECT fuente, id_original, titulo, hoja, cwd, padre_id IS NOT NULL
-         FROM conversaciones_visibles WHERE id = ?1",
+        &format!(
+            "SELECT fuente, id_original, titulo, hoja, cwd, padre_id IS NOT NULL FROM {origen}"
+        ),
         [conversacion_id],
         |r| {
             Ok((
@@ -283,7 +394,8 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
     )?;
     let fuente = Fuente::desde_str(&fuente).ok_or(rusqlite::Error::InvalidQuery)?;
     let publico = id_publico(fuente, &id_original);
-    let msgs = rama_activa(cargar_mensajes(conn, conversacion_id)?, hoja.as_deref());
+    let hoja_efectiva = hoja_forzada.or(hoja.as_deref());
+    let msgs = rama_activa(cargar_mensajes(conn, conversacion_id)?, hoja_efectiva);
     let mut hijos = cargar_hijos(conn, conversacion_id)?;
 
     let mut c = Constructor {
@@ -425,6 +537,307 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
         fuente,
         es_subagente,
     })
+}
+
+/// Versiones anteriores de una conversación web, por orden de llegada (`importada`).
+/// Solo en la tablilla web: la local no tiene `version_de`.
+pub fn versiones(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<Vec<Version>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, COALESCE(importada, '') FROM conversaciones WHERE version_de = ?1 ORDER BY id",
+    )?;
+    let filas = stmt.query_map([conversacion_id], |r| {
+        Ok(Version {
+            id: r.get(0)?,
+            importada: r.get(1)?,
+        })
+    })?;
+    filas.collect()
+}
+
+/// Extrae para el panel lateral `Detalles` los adjuntos, citas, herramientas, documentos del
+/// proyecto, versiones y ramas de una conversación en la tablilla web.
+pub fn detalles_web(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<DetallesWeb> {
+    use rusqlite::OptionalExtension;
+    #[allow(clippy::type_complexity)]
+    let (proyecto, hoja, tipo, version_de): (
+        Option<String>,
+        Option<String>,
+        String,
+        Option<i64>,
+    ) = conn.query_row(
+        "SELECT proyecto, hoja, COALESCE(tipo, 'conversacion'), version_de
+         FROM conversaciones WHERE id = ?1",
+        [conversacion_id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
+
+    let id_vigente = version_de.unwrap_or(conversacion_id);
+    let vers = versiones(conn, id_vigente)?;
+
+    let mut documentos_proyecto = Vec::new();
+    if let Some(ref proy) = proyecto {
+        if !proy.is_empty() {
+            let mut stmt = conn.prepare(
+                "SELECT fuente, id_original, COALESCE(titulo, id_original)
+                 FROM conversaciones_visibles
+                 WHERE proyecto = ?1 AND tipo = 'documento' AND id != ?2
+                 ORDER BY titulo COLLATE NOCASE, id",
+            )?;
+            let filas = stmt.query_map(rusqlite::params![proy, id_vigente], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                ))
+            })?;
+            for f in filas {
+                let (f_str, id_orig, tit) = f?;
+                if let Some(fuente) = Fuente::desde_str(&f_str) {
+                    documentos_proyecto.push(DocumentoProyecto {
+                        id_publico: id_publico(fuente, &id_orig),
+                        titulo: tit,
+                    });
+                }
+            }
+        }
+    }
+
+    let msgs = cargar_mensajes(conn, conversacion_id)?;
+    let ramas = calcular_ramas(&msgs, hoja.as_deref());
+    let mut herramientas = extraer_herramientas(&msgs);
+    let mut adjuntos = Vec::new();
+    let mut citas = Vec::new();
+    let mut html = None;
+
+    let original: Option<String> = conn
+        .query_row(
+            "SELECT json FROM originales WHERE conversacion_id = ?1 ORDER BY rowid DESC LIMIT 1",
+            [conversacion_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let tiene_original = original.is_some();
+
+    if let Some(ref raw) = original {
+        if let Ok(v) = serde_json::from_str::<Value>(raw) {
+            extraer_de_original(&v, &mut adjuntos, &mut citas, &mut herramientas, &mut html);
+        }
+    }
+    if html.is_none() && tipo == "documento" {
+        for m in &msgs {
+            for (tp, cont) in &m.partes {
+                let rec = cont.trim_start();
+                if tp == "texto"
+                    && (rec.len() >= 14 && rec[..14].eq_ignore_ascii_case("<!doctype html")
+                        || rec.len() >= 5 && rec[..5].eq_ignore_ascii_case("<html"))
+                {
+                    html = Some(cont.clone());
+                    break;
+                }
+            }
+        }
+    }
+
+    Ok(DetallesWeb {
+        tipo,
+        proyecto,
+        documentos_proyecto,
+        adjuntos,
+        citas,
+        herramientas,
+        versiones: vers,
+        ramas,
+        html,
+        tiene_original,
+    })
+}
+
+fn calcular_ramas(msgs: &[Msg], hoja_activa: Option<&str>) -> Vec<RamaWeb> {
+    if !msgs.iter().any(|m| m.uuid.is_some()) {
+        return Vec::new();
+    }
+    let padres: HashSet<&str> = msgs.iter().filter_map(|m| m.id_padre.as_deref()).collect();
+    let por_uuid: HashMap<&str, usize> = msgs
+        .iter()
+        .enumerate()
+        .filter_map(|(i, m)| m.uuid.as_deref().map(|u| (u, i)))
+        .collect();
+    let activa_efectiva = hoja_activa.or_else(|| msgs.iter().rev().find_map(|m| m.uuid.as_deref()));
+
+    let mut hojas = Vec::new();
+    for (idx, m) in msgs.iter().enumerate() {
+        let Some(u) = m.uuid.as_deref() else { continue };
+        if !padres.contains(u) {
+            let mut n = 0usize;
+            let mut visitados = HashSet::new();
+            let mut actual = Some(idx);
+            while let Some(i) = actual {
+                if !visitados.insert(i) {
+                    break;
+                }
+                n += 1;
+                actual = msgs[i]
+                    .id_padre
+                    .as_deref()
+                    .and_then(|p| por_uuid.get(p).copied());
+            }
+            hojas.push(RamaWeb {
+                hoja: u.to_string(),
+                hora: m.hora.clone(),
+                mensajes: n,
+                activa: activa_efectiva == Some(u),
+            });
+        }
+    }
+    hojas
+}
+
+fn extraer_herramientas(msgs: &[Msg]) -> Vec<HerramientaWeb> {
+    let mut res = Vec::new();
+    for m in msgs {
+        for (tp, cont) in &m.partes {
+            if tp != "herramienta" {
+                continue;
+            }
+            let (cabecera, resultado) = match cont.split_once("\nResultado: ") {
+                Some((c, r)) => (c, Some(r.to_string())),
+                None => (cont.as_str(), None),
+            };
+            let (nombre, entrada) = match cabecera.split_once(": ") {
+                Some((n, e)) if !n.is_empty() && !n.contains(char::is_whitespace) => {
+                    (n.to_string(), e.to_string())
+                }
+                _ => ("herramienta".to_string(), cabecera.to_string()),
+            };
+            res.push(HerramientaWeb {
+                nombre,
+                entrada,
+                resultado,
+            });
+        }
+    }
+    res
+}
+
+fn extraer_de_original(
+    v: &Value,
+    adjuntos: &mut Vec<AdjuntoWeb>,
+    citas: &mut Vec<CitaWeb>,
+    _herramientas: &mut Vec<HerramientaWeb>,
+    html: &mut Option<String>,
+) {
+    if let Some(h) = v.get("html").and_then(Value::as_str) {
+        if !h.is_empty() {
+            *html = Some(h.to_string());
+        }
+    }
+    let mut urls_vistas: HashSet<String> = HashSet::new();
+    if let Some(mensajes) = v.get("chat_messages").and_then(Value::as_array) {
+        for m in mensajes {
+            let mut nombres_msg = HashSet::new();
+            if let Some(atts) = m.get("attachments").and_then(Value::as_array) {
+                for a in atts {
+                    let nombre = a
+                        .get("file_name")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("adjunto")
+                        .to_string();
+                    nombres_msg.insert(nombre.clone());
+                    let texto_extraido = a
+                        .get("extracted_content")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .map(String::from);
+                    adjuntos.push(AdjuntoWeb {
+                        nombre,
+                        tipo: a
+                            .get("file_type")
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                            .map(String::from),
+                        tamano: a.get("file_size").and_then(Value::as_u64),
+                        texto_extraido,
+                        sin_binario: true,
+                    });
+                }
+            }
+            if let Some(files) = m.get("files").and_then(Value::as_array) {
+                for f in files {
+                    let nombre = f
+                        .get("file_name")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("archivo")
+                        .to_string();
+                    if nombres_msg.insert(nombre.clone()) {
+                        adjuntos.push(AdjuntoWeb {
+                            nombre,
+                            tipo: None,
+                            tamano: None,
+                            texto_extraido: None,
+                            sin_binario: true,
+                        });
+                    }
+                }
+            }
+            if let Some(partes) = m.get("content").and_then(Value::as_array) {
+                for p in partes {
+                    if let Some(cs) = p.get("citations").and_then(Value::as_array) {
+                        for c in cs {
+                            let det = c.get("details");
+                            if let Some(url) = det
+                                .and_then(|d| d.get("url"))
+                                .and_then(Value::as_str)
+                                .or_else(|| c.get("url").and_then(Value::as_str))
+                                .filter(|u| !u.is_empty())
+                            {
+                                if urls_vistas.insert(url.to_string()) {
+                                    citas.push(CitaWeb {
+                                        numero: citas.len() + 1,
+                                        url: url.to_string(),
+                                        tipo: det
+                                            .and_then(|d| d.get("type"))
+                                            .and_then(Value::as_str)
+                                            .map(String::from),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if let Some(mensajes) = v.get("messages").and_then(Value::as_array) {
+        for m in mensajes {
+            if let Some(atts) = m
+                .get("content")
+                .and_then(|c| c.get("attachments"))
+                .and_then(Value::as_array)
+            {
+                for a in atts {
+                    let nombre = a
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .filter(|s| !s.is_empty())
+                        .unwrap_or("adjunto")
+                        .to_string();
+                    adjuntos.push(AdjuntoWeb {
+                        nombre,
+                        tipo: a.get("type").and_then(Value::as_str).map(String::from),
+                        tamano: None,
+                        texto_extraido: a
+                            .get("content")
+                            .and_then(Value::as_str)
+                            .filter(|s| !s.is_empty())
+                            .map(String::from),
+                        sin_binario: true,
+                    });
+                }
+            }
+        }
+    }
 }
 
 fn con_hora(base: String, hora: &Option<String>) -> String {

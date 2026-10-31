@@ -1,6 +1,6 @@
 [package]
 name = "nisaba-core"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["D4vRAM369"]
 license = "GPL-3.0-or-later"
@@ -8,11 +8,17 @@ repository = "https://github.com/D4vRAM369/Nisaba"
 rust-version = "1.89"
 
 [dependencies]
-rusqlite = { version = "0.32", features = ["bundled"] }
+aes-gcm = { version = "0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
+data-encoding = "2.11.1"
+getrandom = "0.4.3"
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
 ruzstd = "0.9.1"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["raw_value"] }
 sha2 = "0.10"
+zeroize = "1.9.1"
+zip = { version = "9.2.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
 tempfile = "3"

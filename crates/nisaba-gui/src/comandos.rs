@@ -1,12 +1,14 @@
+use crate::archivo::Archivo;
 use nisaba_core::{
     busqueda::{self, Filtros, Respuesta},
     indexador::Rutas,
     lector::{Lectura, Tramo},
+    modelo::es_id_web,
     salud::FilaSalud,
 };
 use nisaba_core::{exclusiones, exportar};
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Manager, State};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -37,34 +39,94 @@ fn filtros_core(f: FiltrosGui) -> Result<Filtros, String> {
     })
 }
 
+#[cfg(test)]
 pub fn buscar_en(rutas: &Rutas, consulta: &str, f: FiltrosGui) -> Result<Respuesta, String> {
+    buscar_con_archivo_en(rutas, &Archivo::default(), consulta, f)
+}
+
+pub fn buscar_con_archivo_en(
+    rutas: &Rutas,
+    archivo: &Archivo,
+    consulta: &str,
+    f: FiltrosGui,
+) -> Result<Respuesta, String> {
     let filtros = filtros_core(f)?;
-    let conn =
-        nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
-    busqueda::buscar_sin_contar(&conn, consulta, &filtros).map_err(|e| e.to_string())
+    let conn_local = conectar(rutas)?;
+    if let Some(res_web) = archivo.con_conexion(|conn_web| {
+        let r_loc = busqueda::buscar_sin_contar(&conn_local, consulta, &filtros)
+            .map_err(|e| e.to_string())?;
+        let r_web =
+            busqueda::buscar_sin_contar(conn_web, consulta, &filtros).map_err(|e| e.to_string())?;
+        Ok(busqueda::mezclar(r_loc, r_web, filtros.limite))
+    })? {
+        return Ok(res_web);
+    }
+    busqueda::buscar_sin_contar(&conn_local, consulta, &filtros).map_err(|e| e.to_string())
 }
 
 pub fn contar_busqueda_en(rutas: &Rutas) -> Result<(), String> {
-    let conn =
-        nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
+    let conn = conectar(rutas)?;
     busqueda::contar_uso(&conn, "gui").map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
 pub fn recientes_en(
     rutas: &Rutas,
     f: FiltrosGui,
     desplazamiento: usize,
 ) -> Result<Respuesta, String> {
-    let filtros = filtros_core(f)?;
-    let conn =
-        nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
-    busqueda::recientes_desde(&conn, &filtros, desplazamiento).map_err(|e| e.to_string())
+    recientes_con_archivo_en(rutas, &Archivo::default(), f, desplazamiento)
 }
 
-pub fn leer_en(rutas: &Rutas, id: &str, tramo: Tramo) -> Result<Lectura, String> {
-    let conn =
-        nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
-    let cid = match busqueda::resolver(&conn, id).map_err(|e| e.to_string())? {
+pub fn recientes_con_archivo_en(
+    rutas: &Rutas,
+    archivo: &Archivo,
+    f: FiltrosGui,
+    desplazamiento: usize,
+) -> Result<Respuesta, String> {
+    let filtros = filtros_core(f)?;
+    let conn_local = conectar(rutas)?;
+    if let Some(res_web) = archivo.con_conexion(|conn_web| {
+        let tope = desplazamiento.saturating_add(filtros.limite);
+        let f_amplio = Filtros {
+            limite: tope,
+            ..filtros.clone()
+        };
+        let resp_loc =
+            busqueda::recientes_desde(&conn_local, &f_amplio, 0).map_err(|e| e.to_string())?;
+        let resp_web =
+            busqueda::recientes_desde(conn_web, &f_amplio, 0).map_err(|e| e.to_string())?;
+        let total_sesiones = resp_loc
+            .total_sesiones
+            .saturating_add(resp_web.total_sesiones);
+        let mut r_loc = resp_loc.resultados;
+        r_loc.extend(resp_web.resultados);
+        r_loc.sort_by(|a, b| {
+            b.fin
+                .as_deref()
+                .unwrap_or("")
+                .cmp(a.fin.as_deref().unwrap_or(""))
+                .then_with(|| a.fuente.es_web().cmp(&b.fuente.es_web()))
+                .then_with(|| a.id_publico.cmp(&b.id_publico))
+        });
+        let resultados = r_loc
+            .into_iter()
+            .skip(desplazamiento)
+            .take(filtros.limite)
+            .collect();
+        Ok(Respuesta {
+            resultados,
+            sugerencia: None,
+            total_sesiones,
+        })
+    })? {
+        return Ok(res_web);
+    }
+    busqueda::recientes_desde(&conn_local, &filtros, desplazamiento).map_err(|e| e.to_string())
+}
+
+fn resolver_y_leer(conn: &rusqlite::Connection, id: &str, tramo: Tramo) -> Result<Lectura, String> {
+    let cid = match busqueda::resolver(conn, id).map_err(|e| e.to_string())? {
         busqueda::Resolucion::Uno(c) => c,
         busqueda::Resolucion::Ninguno => return Err(format!("No encuentro la conversación {id}")),
         busqueda::Resolucion::Ambiguo(ids) => {
@@ -76,19 +138,60 @@ pub fn leer_en(rutas: &Rutas, id: &str, tramo: Tramo) -> Result<Lectura, String>
         cantidad: tramo.cantidad.clamp(1, 100),
         ..tramo
     };
-    nisaba_core::lector::leer(&conn, cid, &tramo).map_err(|e| e.to_string())
+    nisaba_core::lector::leer(conn, cid, &tramo).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+pub fn leer_en(rutas: &Rutas, id: &str, tramo: Tramo) -> Result<Lectura, String> {
+    leer_con_archivo_en(rutas, &Archivo::default(), id, tramo)
+}
+
+pub fn leer_con_archivo_en(
+    rutas: &Rutas,
+    archivo: &Archivo,
+    id: &str,
+    tramo: Tramo,
+) -> Result<Lectura, String> {
+    if es_id_web(id) {
+        let res = archivo.con_conexion(|conn| resolver_y_leer(conn, id, tramo))?;
+        return res.ok_or_else(|| "El archivo web está bloqueado.".to_string());
+    }
+    let conn = conectar(rutas)?;
+    resolver_y_leer(&conn, id, tramo)
 }
 
 pub fn salud_en(rutas: &Rutas) -> Result<Vec<FilaSalud>, String> {
-    let conn =
-        nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
+    let conn = conectar(rutas)?;
     nisaba_core::salud::informe(&conn).map_err(|e| e.to_string())
 }
 
+#[cfg(test)]
 pub fn proyectos_en(rutas: &Rutas) -> Result<Vec<String>, String> {
-    let conn =
-        nisaba_core::db::abrir(&rutas.home.join("tablilla.db")).map_err(|e| e.to_string())?;
-    let mut st = conn.prepare("SELECT DISTINCT proyecto FROM conversaciones_visibles WHERE proyecto IS NOT NULL AND proyecto <> '' ORDER BY proyecto COLLATE NOCASE").map_err(|e| e.to_string())?;
+    proyectos_con_archivo_en(rutas, &Archivo::default())
+}
+
+pub fn proyectos_con_archivo_en(rutas: &Rutas, archivo: &Archivo) -> Result<Vec<String>, String> {
+    let conn = conectar(rutas)?;
+    let mut lista = proyectos_de_conexion(&conn)?;
+    if let Some(web_proys) = archivo.con_conexion(proyectos_de_conexion)? {
+        for p in web_proys {
+            if !lista.iter().any(|x| x.eq_ignore_ascii_case(&p)) {
+                lista.push(p);
+            }
+        }
+        lista.sort_by_key(|a| a.to_lowercase());
+    }
+    Ok(lista)
+}
+
+fn proyectos_de_conexion(conn: &rusqlite::Connection) -> Result<Vec<String>, String> {
+    let mut st = conn
+        .prepare(
+            "SELECT DISTINCT proyecto FROM conversaciones_visibles
+             WHERE proyecto IS NOT NULL AND proyecto <> ''
+             ORDER BY proyecto COLLATE NOCASE",
+        )
+        .map_err(|e| e.to_string())?;
     let filas = st.query_map([], |r| r.get(0)).map_err(|e| e.to_string())?;
     filas
         .collect::<rusqlite::Result<Vec<_>>>()
@@ -107,25 +210,58 @@ pub struct Documento {
     pub secretos: Vec<exportar::Hallazgo>,
 }
 
-pub fn documento_en(rutas: &Rutas, id: &str, todo: bool) -> Result<Documento, String> {
-    let conn = conectar(rutas)?;
-    let markdown = exportar::documento(&conn, id, todo)?;
+fn documento_de_conexion(
+    conn: &rusqlite::Connection,
+    id: &str,
+    todo: bool,
+) -> Result<Documento, String> {
+    let markdown = exportar::documento(conn, id, todo)?;
     Ok(Documento {
         secretos: exportar::posibles_secretos(&markdown),
-        nombre_md: exportar::nombre_propuesto(&conn, id, "md")?,
-        nombre_pdf: exportar::nombre_propuesto(&conn, id, "pdf")?,
+        nombre_md: exportar::nombre_propuesto(conn, id, "md")?,
+        nombre_pdf: exportar::nombre_propuesto(conn, id, "pdf")?,
         markdown,
     })
+}
+
+#[cfg(test)]
+pub fn documento_en(rutas: &Rutas, id: &str, todo: bool) -> Result<Documento, String> {
+    documento_con_archivo_en(rutas, &Archivo::default(), id, todo)
+}
+
+pub fn documento_con_archivo_en(
+    rutas: &Rutas,
+    archivo: &Archivo,
+    id: &str,
+    todo: bool,
+) -> Result<Documento, String> {
+    if es_id_web(id) {
+        let res = archivo.con_conexion(|conn| documento_de_conexion(conn, id, todo))?;
+        return res.ok_or_else(|| "El archivo web está bloqueado.".to_string());
+    }
+    let conn = conectar(rutas)?;
+    documento_de_conexion(&conn, id, todo)
 }
 
 #[derive(Serialize)]
 pub struct Origen {
     pub cwd: Option<String>,
-    /// Comando para reanudar; `None` en subagentes, que no se reanudan solos.
+    /// Comando para reanudar; `None` en subagentes y en conversaciones web.
     pub continuar: Option<String>,
 }
 
 pub fn origen_en(rutas: &Rutas, id: &str) -> Result<Origen, String> {
+    origen_con_archivo_en(rutas, &Archivo::default(), id)
+}
+
+pub fn origen_con_archivo_en(rutas: &Rutas, archivo: &Archivo, id: &str) -> Result<Origen, String> {
+    if es_id_web(id) {
+        let _ = archivo;
+        return Ok(Origen {
+            cwd: None,
+            continuar: None,
+        });
+    }
     let conn = conectar(rutas)?;
     let cid = busqueda::resolver_unico(&conn, id)?;
     let tramo = Tramo {
@@ -207,9 +343,19 @@ async fn en_segundo_plano<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn documento(id_publico: String, todo: Option<bool>) -> Result<Documento, String> {
+pub async fn documento(
+    archivo: State<'_, Archivo>,
+    id_publico: String,
+    todo: Option<bool>,
+) -> Result<Documento, String> {
+    let archivo = archivo.inner().clone();
     en_segundo_plano(move || {
-        documento_en(&Rutas::desde_entorno(), &id_publico, todo.unwrap_or(false))
+        documento_con_archivo_en(
+            &Rutas::desde_entorno(),
+            &archivo,
+            &id_publico,
+            todo.unwrap_or(false),
+        )
     })
     .await
 }
@@ -240,8 +386,10 @@ pub async fn guardar_como(
 }
 
 #[tauri::command]
-pub async fn origen(id_publico: String) -> Result<Origen, String> {
-    en_segundo_plano(move || origen_en(&Rutas::desde_entorno(), &id_publico)).await
+pub async fn origen(archivo: State<'_, Archivo>, id_publico: String) -> Result<Origen, String> {
+    let archivo = archivo.inner().clone();
+    en_segundo_plano(move || origen_con_archivo_en(&Rutas::desde_entorno(), &archivo, &id_publico))
+        .await
 }
 
 #[tauri::command]
@@ -307,10 +455,13 @@ pub async fn elegir_carpeta(app: tauri::AppHandle) -> Result<Option<String>, Str
 }
 
 #[tauri::command]
-pub async fn proyectos() -> Result<Vec<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || proyectos_en(&Rutas::desde_entorno()))
-        .await
-        .map_err(|e| e.to_string())?
+pub async fn proyectos(archivo: State<'_, Archivo>) -> Result<Vec<String>, String> {
+    let archivo = archivo.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        proyectos_con_archivo_en(&Rutas::desde_entorno(), &archivo)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -324,9 +475,14 @@ pub async fn aviso_limpieza() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub async fn buscar(consulta: String, filtros: FiltrosGui) -> Result<Respuesta, String> {
+pub async fn buscar(
+    archivo: State<'_, Archivo>,
+    consulta: String,
+    filtros: FiltrosGui,
+) -> Result<Respuesta, String> {
+    let archivo = archivo.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        buscar_en(&Rutas::desde_entorno(), &consulta, filtros)
+        buscar_con_archivo_en(&Rutas::desde_entorno(), &archivo, &consulta, filtros)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -341,12 +497,15 @@ pub async fn contar_busqueda() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn recientes(
+    archivo: State<'_, Archivo>,
     filtros: FiltrosGui,
     desplazamiento: Option<usize>,
 ) -> Result<Respuesta, String> {
+    let archivo = archivo.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        recientes_en(
+        recientes_con_archivo_en(
             &Rutas::desde_entorno(),
+            &archivo,
             filtros,
             desplazamiento.unwrap_or(0),
         )
@@ -357,15 +516,18 @@ pub async fn recientes(
 
 #[tauri::command]
 pub async fn leer(
+    archivo: State<'_, Archivo>,
     id_publico: String,
     desde: Option<usize>,
     cantidad: Option<usize>,
     alrededor_de: Option<i64>,
     todo: Option<bool>,
 ) -> Result<Lectura, String> {
+    let archivo = archivo.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        leer_en(
+        leer_con_archivo_en(
             &Rutas::desde_entorno(),
+            &archivo,
             &id_publico,
             Tramo {
                 desde,
@@ -389,6 +551,10 @@ pub async fn salud() -> Result<Vec<FilaSalud>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::archivo::{
+        bloquear_en, confirmar_archivo_en, desbloquear_en, estado_archivo_en, preparar_archivo_en,
+        EstadoArchivo,
+    };
     use nisaba_core::{
         db,
         indexador::{indexar, ResultadoIndexado},
@@ -447,6 +613,107 @@ mod tests {
                 std::fs::copy(e.path(), d).unwrap();
             }
         }
+    }
+
+    fn sembrar_web(rutas: &Rutas, archivo: &Archivo, contrasena: &str) {
+        let _codigo = preparar_archivo_en(archivo, contrasena, contrasena).unwrap();
+        confirmar_archivo_en(rutas, archivo, true).unwrap();
+        archivo
+            .con_conexion(|conn| {
+                conn.execute(
+                    "INSERT INTO conversaciones(id, fuente, id_original, titulo, fin)
+                     VALUES (1, 'claude-web', 'web00001abc', 'Charla web', '2026-10-30T10:00:00Z')",
+                    [],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO mensajes(id, conversacion_id, orden, rol, oculto)
+                     VALUES (1, 1, 0, 'usuario', 0)",
+                    [],
+                )
+                .unwrap();
+                conn.execute(
+                    "INSERT INTO partes(id, mensaje_id, orden, tipo, contenido)
+                     VALUES (1, 1, 0, 'texto', 'Quiero subtitulos desde claude web')",
+                    [],
+                )
+                .unwrap();
+                Ok(())
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn bloqueado_solo_devuelve_local() {
+        let (_d, rutas) = preparar();
+        let archivo = Archivo::default();
+        sembrar_web(&rutas, &archivo, "clave suficientemente larga");
+        bloquear_en(&archivo);
+        assert_eq!(
+            estado_archivo_en(&rutas, &archivo),
+            EstadoArchivo::Bloqueado
+        );
+
+        let r =
+            buscar_con_archivo_en(&rutas, &archivo, "subtitulos", FiltrosGui::default()).unwrap();
+        assert_eq!(r.resultados.len(), 1);
+        assert_eq!(r.resultados[0].id_publico, "cx-mo-codex");
+        assert!(leer_con_archivo_en(&rutas, &archivo, "cw-web00001", Tramo::default()).is_err());
+    }
+
+    #[test]
+    fn desbloqueado_mezcla() {
+        let (_d, rutas) = preparar();
+        let archivo = Archivo::default();
+        let clave = "clave suficientemente larga";
+        sembrar_web(&rutas, &archivo, clave);
+        bloquear_en(&archivo);
+        desbloquear_en(&rutas, &archivo, clave).unwrap();
+        assert_eq!(
+            estado_archivo_en(&rutas, &archivo),
+            EstadoArchivo::Desbloqueado
+        );
+
+        let r =
+            buscar_con_archivo_en(&rutas, &archivo, "subtitulos", FiltrosGui::default()).unwrap();
+        assert_eq!(r.resultados.len(), 2);
+        assert!(r.resultados.iter().any(|x| x.id_publico == "cx-mo-codex"));
+        assert!(r.resultados.iter().any(|x| x.id_publico == "cw-web00001"));
+
+        let lec = leer_con_archivo_en(&rutas, &archivo, "cw-web00001", Tramo::default()).unwrap();
+        assert_eq!(lec.titulo, "Charla web");
+    }
+
+    #[test]
+    fn bloquear_suelta_la_conexion() {
+        let (_d, rutas) = preparar();
+        let archivo = Archivo::default();
+        sembrar_web(&rutas, &archivo, "clave suficientemente larga");
+        assert!(archivo.desbloqueado());
+
+        bloquear_en(&archivo);
+        assert!(!archivo.desbloqueado());
+        assert!(archivo.conn.lock().unwrap().is_none());
+        assert!(archivo.abrir_conexion_propia(&rutas.home).is_err());
+    }
+
+    #[test]
+    fn confirmar_sin_preparar_falla() {
+        let (_d, rutas) = preparar();
+        let archivo = Archivo::default();
+        let err = confirmar_archivo_en(&rutas, &archivo, true).unwrap_err();
+        assert!(err.contains("prepara"), "{err}");
+        assert_eq!(estado_archivo_en(&rutas, &archivo), EstadoArchivo::NoExiste);
+    }
+
+    #[test]
+    fn origen_web_sin_continuar_ni_carpeta() {
+        let (_d, rutas) = preparar();
+        let archivo = Archivo::default();
+        sembrar_web(&rutas, &archivo, "clave suficientemente larga");
+        let orig = origen_con_archivo_en(&rutas, &archivo, "cw-web00001").unwrap();
+        assert_eq!(orig.cwd, None);
+        assert_eq!(orig.continuar, None);
     }
 
     #[test]

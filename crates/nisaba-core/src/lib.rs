@@ -1,8 +1,11 @@
 pub mod adaptadores;
+pub mod archivo_web;
+pub mod boveda;
 pub mod busqueda;
 pub mod db;
 pub mod exclusiones;
 pub mod exportar;
+pub mod importar;
 pub mod indexador;
 pub mod lector;
 pub mod modelo;

@@ -1,6 +1,6 @@
 [package]
 name = "nisaba-cli"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["D4vRAM369"]
 license = "GPL-3.0-or-later"
@@ -13,8 +13,11 @@ path = "src/main.rs"
 [dependencies]
 nisaba-core = { path = "../nisaba-core" }
 clap = { version = "4", features = ["derive"] }
+rpassword = "7.5.4"
 serde_json = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl"] }
+zeroize = "1.9.1"
 
 [dev-dependencies]
 tempfile = "3"
+zip = { version = "9.2.0", default-features = false, features = ["deflate"] }
