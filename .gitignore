@@ -10,7 +10,12 @@ crates/nisaba-gui/binaries/
 flatpak/nisaba-deb/
 flatpak/.flatpak-builder/
 
-# Documentación interna: solo local, nunca en Git
+# Documentación interna y datos locales: nunca en Git
 docs/
 HANDOFF.md
 AGENTS.md
+.claude/
+*.db
+*.db-wal
+*.db-shm
+boveda.json*
