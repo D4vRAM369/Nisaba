@@ -82,14 +82,14 @@ nisaba search "something" --json       # output for scripts
 nisaba show cx-xxxxxxxx                 # the id is printed by `search`
 nisaba show cx-xxxxxxxx --all           # with tools, reasoning and hidden events
 nisaba open cx-xxxxxxxx                 # opens that conversation in the window
-nisaba export cx-xxxxxxxx               # saves it whole as Markdown (--all, --output <path>)
+nisaba export cx-xxxxxxxx               # saves it whole as Markdown (--all, --output <path>, --overwrite)
 nisaba exclude ~/Projects/Private       # don't index that folder (--delete removes what was stored)
 nisaba exclude --list                   # excluded folders (--remove <folder> to index it again)
 nisaba health                           # health of each source
 nisaba usage                            # searches per day and channel
 ```
 
-If `export` finds possible secrets, it shows them masked and writes nothing until you add `--force`. The Spanish commands work too (`buscar`, `ver`, `abrir`, `exportar`, `excluir`, `indexar`, `salud`, `uso`); `nisaba --help` lists both. Messages are still in Spanish.
+If `export` finds possible secrets, it shows them masked and writes nothing until you add `--force`. It won't replace an existing file either: use `--overwrite` for that. The Spanish commands work too (`buscar`, `ver`, `abrir`, `exportar`, `excluir`, `indexar`, `salud`, `uso`); `nisaba --help` lists both. Messages are still in Spanish.
 
 With Flatpak, prefix `flatpak run --command=nisaba io.github.d4vram369.Nisaba` (for example, `flatpak run --command=nisaba io.github.d4vram369.Nisaba search "something"`).
 

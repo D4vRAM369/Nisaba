@@ -206,6 +206,28 @@ fn exportar_escribe_markdown_completo() {
 }
 
 #[test]
+fn exportar_no_pisa_un_archivo_existente() {
+    let c = ctx();
+    let destino = c.dir.path().join("mio.md");
+    std::fs::write(&destino, "notas mías").unwrap();
+    let ruta = destino.to_str().unwrap();
+
+    let o = c.nisaba(&["exportar", "cx-cx01", "--salida", ruta]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(err(&o).contains("--sobrescribir"), "{}", err(&o));
+    assert_eq!(std::fs::read_to_string(&destino).unwrap(), "notas mías");
+
+    // `--forzar` acepta secretos, no pisar archivos: son dos decisiones distintas.
+    let o = c.nisaba(&["exportar", "cx-cx01", "--salida", ruta, "--forzar"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert_eq!(std::fs::read_to_string(&destino).unwrap(), "notas mías");
+
+    let o = c.nisaba(&["exportar", "cx-cx01", "--salida", ruta, "--sobrescribir"]);
+    assert_eq!(o.status.code(), Some(0), "{}", err(&o));
+    assert!(std::fs::read_to_string(&destino).unwrap().starts_with("# "));
+}
+
+#[test]
 fn exportar_con_secreto_sin_forzar() {
     let c = ctx();
     con_secreto(&c);

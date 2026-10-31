@@ -10,7 +10,8 @@ use nisaba_core::modelo::Fuente;
 use nisaba_core::salud::{aviso_limpieza_claude, informe};
 use nisaba_core::{db, exclusiones, exportar};
 use rusqlite::Connection;
-use std::io::IsTerminal;
+use std::fs::OpenOptions;
+use std::io::{ErrorKind, IsTerminal, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -75,6 +76,9 @@ enum Orden {
         /// Exporta aunque haya posibles secretos
         #[arg(long, visible_alias = "force")]
         forzar: bool,
+        /// Reemplaza el archivo de destino si ya existe
+        #[arg(long, visible_alias = "overwrite")]
+        sobrescribir: bool,
     },
     /// No indexar una carpeta (y sus subcarpetas)
     #[command(visible_alias = "exclude")]
@@ -243,6 +247,7 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
             todo,
             salida,
             forzar,
+            sobrescribir,
         } => {
             indexar_antes(&mut conn, &rutas);
             let doc = exportar::documento(&conn, &id, todo)?;
@@ -259,7 +264,23 @@ fn ejecutar(orden: Orden) -> Result<u8, String> {
                 Some(p) => p,
                 None => PathBuf::from(exportar::nombre_propuesto(&conn, &id, "md")?),
             };
-            std::fs::write(&destino, doc).map_err(|x| format!("{}: {x}", destino.display()))?;
+            // `create_new` lo comprueba y lo crea de una vez: entre mirar y escribir no cabe nadie.
+            let mut opciones = OpenOptions::new();
+            opciones
+                .write(true)
+                .create_new(!sobrescribir)
+                .create(sobrescribir)
+                .truncate(sobrescribir);
+            opciones
+                .open(&destino)
+                .and_then(|mut f| f.write_all(doc.as_bytes()))
+                .map_err(|x| match x.kind() {
+                    ErrorKind::AlreadyExists => format!(
+                        "{} ya existe; para reemplazarlo, usa --sobrescribir.",
+                        destino.display()
+                    ),
+                    _ => format!("{}: {x}", destino.display()),
+                })?;
             println!("Guardado en {}", destino.display());
             Ok(0)
         }

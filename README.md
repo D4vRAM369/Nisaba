@@ -80,14 +80,14 @@ nisaba buscar "algo" --json            # salida para scripts
 nisaba ver cx-xxxxxxxx                  # el id lo imprime `buscar`
 nisaba ver cx-xxxxxxxx --todo           # con herramientas, razonamiento y ocultos
 nisaba abrir cx-xxxxxxxx                # abre esa conversación en la ventana
-nisaba exportar cx-xxxxxxxx             # la guarda completa en Markdown (--todo, --salida <ruta>)
+nisaba exportar cx-xxxxxxxx             # la guarda completa en Markdown (--todo, --salida <ruta>, --sobrescribir)
 nisaba excluir ~/Proyectos/Privado      # no indexar esa carpeta (--borrar elimina lo ya guardado)
 nisaba excluir --lista                  # carpetas excluidas (--quitar <carpeta> para volver a indexarla)
 nisaba salud                            # estado de cada fuente
 nisaba uso                              # búsquedas por día y canal
 ```
 
-Si `exportar` encuentra posibles secretos, te los enseña enmascarados y no escribe nada hasta que añades `--forzar`. Los comandos también existen en inglés (`search`, `show`, `open`, `export`, `exclude`, `index`, `health`, `usage`, y `--source`, `--all`, `--output`…): `nisaba --help` los lista.
+Si `exportar` encuentra posibles secretos, te los enseña enmascarados y no escribe nada hasta que añades `--forzar`. Tampoco pisa un archivo que ya exista: para reemplazarlo, usa `--sobrescribir`. Los comandos también existen en inglés (`search`, `show`, `open`, `export`, `exclude`, `index`, `health`, `usage`, y `--source`, `--all`, `--output`…): `nisaba --help` los lista.
 
 En Flatpak, antepón `flatpak run --command=nisaba io.github.d4vram369.Nisaba` (por ejemplo, `flatpak run --command=nisaba io.github.d4vram369.Nisaba buscar "algo"`).
 
