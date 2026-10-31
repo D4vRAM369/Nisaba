@@ -1,4 +1,5 @@
 pub mod adaptadores;
+pub mod boveda;
 pub mod busqueda;
 pub mod db;
 pub mod exclusiones;
