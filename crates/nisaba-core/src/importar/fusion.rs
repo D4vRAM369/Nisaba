@@ -24,7 +24,38 @@ struct Previa {
     huella: Option<String>,
     titulo: Option<String>,
     proyecto: Option<String>,
+    inicio: Option<String>,
+    fin: Option<String>,
     tipo: String,
+}
+
+/// Con qué datos se escribe una fila. Lo que el ZIP no trae no borra lo que ya había.
+struct Datos<'a> {
+    titulo: Option<&'a str>,
+    proyecto: Option<&'a str>,
+    inicio: Option<&'a str>,
+    fin: Option<&'a str>,
+}
+
+impl<'a> Datos<'a> {
+    fn de(c: &'a ConversacionImportada) -> Self {
+        Datos {
+            titulo: c.titulo.as_deref(),
+            proyecto: c.proyecto.as_deref(),
+            inicio: c.inicio.as_deref(),
+            fin: c.fin.as_deref(),
+        }
+    }
+
+    fn sobre(c: &'a ConversacionImportada, p: &'a Previa) -> Self {
+        let d = Datos::de(c);
+        Datos {
+            titulo: d.titulo.or(p.titulo.as_deref()),
+            proyecto: d.proyecto.or(p.proyecto.as_deref()),
+            inicio: d.inicio.or(p.inicio.as_deref()),
+            fin: d.fin.or(p.fin.as_deref()),
+        }
+    }
 }
 
 /// Aplica la tabla de «Reimportar» de la spec dentro de la transacción de quien llama:
@@ -38,7 +69,7 @@ pub fn fusionar(tx: &Transaction, c: &ConversacionImportada) -> rusqlite::Result
     let huella = huella_web(c);
     let previa = tx
         .query_row(
-            "SELECT id, huella, titulo, proyecto, tipo FROM conversaciones
+            "SELECT id, huella, titulo, proyecto, inicio, fin, tipo FROM conversaciones
              WHERE fuente=?1 AND id_original=?2",
             params![c.base.fuente.as_str(), c.base.id_original],
             |f| {
@@ -47,32 +78,31 @@ pub fn fusionar(tx: &Transaction, c: &ConversacionImportada) -> rusqlite::Result
                     huella: f.get(1)?,
                     titulo: f.get(2)?,
                     proyecto: f.get(3)?,
-                    tipo: f.get(4)?,
+                    inicio: f.get(4)?,
+                    fin: f.get(5)?,
+                    tipo: f.get(6)?,
                 })
             },
         )
         .optional()?;
     let Some(p) = previa else {
-        let id_original = c.base.id_original.as_str();
-        escribir(
-            tx,
-            c,
-            id_original,
-            c.titulo.as_deref(),
-            c.proyecto.as_deref(),
-            &huella,
-        )?;
+        escribir(tx, c, &c.base.id_original, &Datos::de(c), &huella)?;
         return Ok(Efecto::Nueva);
     };
+    let distancia = distancia_de_fin(tx, &p, c)?;
+    let anterior = distancia.is_some_and(|d| d < 0.0);
+    let posterior = distancia.is_some_and(|d| d > 0.0);
     if p.huella.as_deref() == Some(huella.as_str()) {
-        if datos_distintos(&p, c) {
+        // Un ZIP viejo no impone sus datos a la vigente.
+        if datos_distintos(&p, c) && !anterior {
             actualizar_datos(tx, p.id, c)?;
             return Ok(Efecto::Actualizada);
         }
         rellenar_original(tx, p.id, c)?;
         return Ok(Efecto::Igual);
     }
-    // Un ZIP antiguo trae lo que ya se guardó como versión: no debe volver a ser la vigente.
+    // Lo que ya se guardó como versión no vuelve a ser la vigente, salvo que sea demostrablemente
+    // más nuevo: entonces el usuario ha vuelto a ese contenido.
     let version: Option<i64> = tx
         .query_row(
             "SELECT id FROM conversaciones WHERE version_de = ?1 AND huella = ?2
@@ -81,21 +111,21 @@ pub fn fusionar(tx: &Transaction, c: &ConversacionImportada) -> rusqlite::Result
             |f| f.get(0),
         )
         .optional()?;
-    if let Some(version) = version {
+    if let Some(version) = version.filter(|_| !posterior) {
         rellenar_original(tx, version, c)?;
         return Ok(Efecto::Igual);
     }
-    let titulo = c.titulo.as_deref().or(p.titulo.as_deref());
-    let proyecto = c.proyecto.as_deref().or(p.proyecto.as_deref());
+    let datos = Datos::sobre(c, &p);
+    // Antes que `solo_anade`: un ZIP viejo con más mensajes tampoco puede pisar la vigente.
+    if anterior {
+        archivar(tx, p.id, c, &datos, &huella)?;
+        return Ok(Efecto::Versionada);
+    }
     if solo_anade(&cargar_mensajes(tx, p.id)?, &c.base.mensajes) {
-        escribir(tx, c, &c.base.id_original, titulo, proyecto, &huella)?;
+        escribir(tx, c, &c.base.id_original, &datos, &huella)?;
         return Ok(Efecto::Actualizada);
     }
-    if es_anterior(tx, p.id, c)? {
-        archivar(tx, p.id, c, titulo, proyecto, &huella)?;
-    } else {
-        versionar(tx, p.id, c, titulo, proyecto, &huella)?;
-    }
+    versionar(tx, p.id, c, &datos, &huella)?;
     Ok(Efecto::Versionada)
 }
 
@@ -163,21 +193,20 @@ fn mismo_mensaje(v: &Msg, n: &Mensaje) -> bool {
             .all(|((tipo, contenido), p)| tipo == p.tipo.as_str() && *contenido == p.contenido)
 }
 
-/// `true` si la que llega es claramente anterior a la vigente: viene de un ZIP viejo y no debe
-/// desplazarla. Sin las dos fechas no se sabe (SQL da NULL) y gana la que llega, porque un
-/// borrado real también trae menos mensajes. Con `julianday` y no como texto: `10:00:00.5Z`
+/// Días entre el `fin` que llega y el de la vigente: negativo si llega un ZIP viejo. `None` si
+/// falta alguna fecha o no se entiende (SQL da NULL): entonces no se puede afirmar nada, porque
+/// un borrado real también trae menos mensajes. Con `julianday` y no como texto: `10:00:00.5Z`
 /// es posterior a `10:00:00Z` aunque ordene antes.
-fn es_anterior(
+fn distancia_de_fin(
     tx: &Transaction,
-    id_vigente: i64,
+    p: &Previa,
     c: &ConversacionImportada,
-) -> rusqlite::Result<bool> {
-    let anterior: Option<bool> = tx.query_row(
-        "SELECT julianday(?1) < julianday(fin) FROM conversaciones WHERE id = ?2",
-        params![c.fin, id_vigente],
+) -> rusqlite::Result<Option<f64>> {
+    tx.query_row(
+        "SELECT julianday(?1) - julianday(?2)",
+        params![c.fin, p.fin],
         |f| f.get(0),
-    )?;
-    Ok(anterior == Some(true))
+    )
 }
 
 /// `<id>@<n>` por orden de llegada: `@1` es la primera que pasó a ser versión.
@@ -200,15 +229,14 @@ fn versionar(
     tx: &Transaction,
     id_previo: i64,
     c: &ConversacionImportada,
-    titulo: Option<&str>,
-    proyecto: Option<&str>,
+    datos: &Datos,
     huella: &str,
 ) -> rusqlite::Result<()> {
     tx.execute(
         "UPDATE conversaciones SET id_original = ?1 WHERE id = ?2",
         params![nombre_de_version(tx, id_previo, c)?, id_previo],
     )?;
-    let id = escribir(tx, c, &c.base.id_original, titulo, proyecto, huella)?;
+    let id = escribir(tx, c, &c.base.id_original, datos, huella)?;
     tx.execute(
         "UPDATE conversaciones SET version_de = ?1 WHERE id = ?2 OR version_de = ?2",
         params![id, id_previo],
@@ -221,12 +249,11 @@ fn archivar(
     tx: &Transaction,
     id_vigente: i64,
     c: &ConversacionImportada,
-    titulo: Option<&str>,
-    proyecto: Option<&str>,
+    datos: &Datos,
     huella: &str,
 ) -> rusqlite::Result<()> {
     let nombre = nombre_de_version(tx, id_vigente, c)?;
-    let id = escribir(tx, c, &nombre, titulo, proyecto, huella)?;
+    let id = escribir(tx, c, &nombre, datos, huella)?;
     tx.execute(
         "UPDATE conversaciones SET version_de = ?1 WHERE id = ?2",
         params![id_vigente, id],
@@ -234,28 +261,27 @@ fn archivar(
     Ok(())
 }
 
-/// Crea la fila `id_original` o, si existe, la sustituye por la nueva. `titulo` y `proyecto`
-/// ya vienen resueltos: los del ZIP o, si no los trae, los que había.
+/// Crea la fila `id_original` o, si existe, la sustituye por la nueva. Título y fechas que no
+/// vengan en `datos` se deducen de los mensajes.
 fn escribir(
     tx: &Transaction,
     c: &ConversacionImportada,
     id_original: &str,
-    titulo: Option<&str>,
-    proyecto: Option<&str>,
+    datos: &Datos,
     huella: &str,
 ) -> rusqlite::Result<i64> {
     let conv = &c.base;
-    let titulo = titulo
+    let proyecto = datos.proyecto;
+    let titulo = datos
+        .titulo
         .map(str::to_string)
         .unwrap_or_else(|| titulo_util(proyecto, &conv.mensajes));
-    let inicio = c
+    let inicio = datos
         .inicio
-        .as_ref()
-        .or_else(|| conv.mensajes.iter().find_map(|m| m.hora.as_ref()));
-    let fin = c
+        .or_else(|| conv.mensajes.iter().find_map(|m| m.hora.as_deref()));
+    let fin = datos
         .fin
-        .as_ref()
-        .or_else(|| conv.mensajes.iter().rev().find_map(|m| m.hora.as_ref()));
+        .or_else(|| conv.mensajes.iter().rev().find_map(|m| m.hora.as_deref()));
     let id: i64 = tx.query_row(
         "INSERT INTO conversaciones(fuente, id_original, descripcion, proyecto, titulo, inicio, fin,
            hoja, huella, cwd, tipo, importada)
@@ -890,6 +916,13 @@ mod tests {
         assert_eq!(original(&con, id_de(&con, ID)), None);
     }
 
+    fn fin_de(con: &Connection, id: i64) -> Option<String> {
+        con.query_row("SELECT fin FROM conversaciones WHERE id = ?1", [id], |f| {
+            f.get(0)
+        })
+        .unwrap()
+    }
+
     fn con_fin(mensajes: Vec<Mensaje>, fin: Option<&str>) -> ConversacionImportada {
         let mut c = conv(mensajes);
         c.fin = fin.map(str::to_string);
@@ -991,6 +1024,147 @@ mod tests {
             assert_eq!(importar(&mut con, &c), Efecto::Versionada);
             assert_versionada(&con, &["uno", "dos"], &["uno"]);
         }
+    }
+
+    #[test]
+    fn zip_antiguo_con_otro_titulo_no_pisa_el_original() {
+        let (_d, mut con) = base();
+        let mut nueva = con_fin(vec![m("uno")], Some("2026-10-02T10:00:00Z"));
+        nueva.titulo = Some("Título nuevo".to_string());
+        nueva.original = Some("{\"v\":2}".to_string());
+        importar(&mut con, &nueva);
+        let id = id_de(&con, ID);
+
+        let mut antigua = con_fin(vec![m("uno")], Some("2026-10-01T10:00:00Z"));
+        antigua.titulo = Some("Título viejo".to_string());
+        antigua.proyecto = Some("Viejo".to_string());
+        antigua.tipo = TipoWeb::Documento;
+        antigua.original = Some("{\"v\":1}".to_string());
+        assert_eq!(importar(&mut con, &antigua), Efecto::Igual);
+
+        let fila: (String, Option<String>, String, String) = con
+            .query_row(
+                "SELECT titulo, proyecto, tipo, fin FROM conversaciones",
+                [],
+                |f| Ok((f.get(0)?, f.get(1)?, f.get(2)?, f.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            fila,
+            (
+                "Título nuevo".to_string(),
+                None,
+                "conversacion".to_string(),
+                "2026-10-02T10:00:00Z".to_string()
+            )
+        );
+        assert_eq!(original(&con, id).as_deref(), Some("{\"v\":2}"));
+
+        // Si faltaba el original, el ZIP antiguo sí lo rellena.
+        con.execute("DELETE FROM originales", []).unwrap();
+        assert_eq!(importar(&mut con, &antigua), Efecto::Igual);
+        assert_eq!(original(&con, id).as_deref(), Some("{\"v\":1}"));
+    }
+
+    #[test]
+    fn zip_antiguo_con_mas_mensajes_se_archiva() {
+        let (_d, mut con) = base();
+        let mut nueva = con_fin(vec![m("uno")], Some("2026-10-02T10:00:00Z"));
+        nueva.original = Some("{\"v\":2}".to_string());
+        importar(&mut con, &nueva);
+        let id = id_de(&con, ID);
+
+        let mut antigua = con_fin(vec![m("uno"), m("dos")], Some("2026-10-01T10:00:00Z"));
+        antigua.original = Some("{\"v\":1}".to_string());
+        assert_eq!(importar(&mut con, &antigua), Efecto::Versionada);
+
+        assert_eq!(id_de(&con, ID), id);
+        assert_eq!(textos(&con, id), ["uno"]);
+        assert_eq!(fin_de(&con, id).as_deref(), Some("2026-10-02T10:00:00Z"));
+        assert_eq!(original(&con, id).as_deref(), Some("{\"v\":2}"));
+        let vers = lector::versiones(&con, id).unwrap();
+        assert_eq!(vers.len(), 1);
+        assert_eq!(textos(&con, vers[0].id), ["uno", "dos"]);
+        assert_eq!(original(&con, vers[0].id).as_deref(), Some("{\"v\":1}"));
+
+        assert_eq!(importar(&mut con, &antigua), Efecto::Igual);
+        assert_eq!(lector::versiones(&con, id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn borrado_real_nuevo_igual_a_una_version_si_es_la_actual() {
+        let (_d, mut con) = base();
+        let (uno, dos, tres) = (
+            "2026-10-01T10:00:00Z",
+            "2026-10-02T10:00:00Z",
+            "2026-10-03T10:00:00Z",
+        );
+        importar(&mut con, &con_fin(vec![m("corta")], Some(uno)));
+        importar(&mut con, &con_fin(vec![m("corta"), m("larga")], Some(dos)));
+        importar(&mut con, &con_fin(vec![m("otra")], Some(tres)));
+        // La vigente es `otra`; `@1` guarda corta + larga.
+        let atras = con_fin(vec![m("corta"), m("larga")], Some(dos));
+        assert_eq!(importar(&mut con, &atras), Efecto::Igual);
+        assert_eq!(textos(&con, id_de(&con, ID)), ["otra"]);
+
+        // Misma fecha o sin fecha no demuestran que sea más nueva.
+        for fin in [Some(tres), None] {
+            let c = con_fin(vec![m("corta"), m("larga")], fin);
+            assert_eq!(importar(&mut con, &c), Efecto::Igual);
+        }
+        assert_eq!(textos(&con, id_de(&con, ID)), ["otra"]);
+
+        // Más nueva que la vigente: el usuario volvió a ese contenido.
+        let vuelta = con_fin(vec![m("corta"), m("larga")], Some("2026-10-04T10:00:00Z"));
+        assert_eq!(importar(&mut con, &vuelta), Efecto::Versionada);
+        let id = id_de(&con, ID);
+        assert_eq!(textos(&con, id), ["corta", "larga"]);
+        assert_eq!(lector::versiones(&con, id).unwrap().len(), 2);
+        assert_eq!(textos(&con, id_de(&con, &format!("{ID}@2"))), ["otra"]);
+        assert_eq!(importar(&mut con, &vuelta), Efecto::Igual);
+    }
+
+    #[test]
+    fn crecer_sin_fecha_no_borra_fin() {
+        let (_d, mut con) = base();
+        let (inicio, fin) = ("2026-10-01T10:00:00Z", "2026-10-02T10:00:00Z");
+        importar(&mut con, &conv(vec![m("uno")]));
+        con.execute(
+            "UPDATE conversaciones SET inicio = ?1, fin = ?2",
+            [inicio, fin],
+        )
+        .unwrap();
+        let fechas = |con: &Connection| -> (String, String) {
+            con.query_row(
+                "SELECT inicio, fin FROM conversaciones WHERE id_original = ?1",
+                [ID],
+                |f| Ok((f.get(0)?, f.get(1)?)),
+            )
+            .unwrap()
+        };
+        let esperadas = (inicio.to_string(), fin.to_string());
+        let sin_fechas = |mensajes| {
+            let mut c = conv(mensajes);
+            c.inicio = None;
+            c.fin = None;
+            c
+        };
+        // La hora de un mensaje no sustituye a la fecha guardada.
+        let tardio = Mensaje {
+            hora: Some("2026-10-09T10:00:00Z".to_string()),
+            ..m("dos")
+        };
+        assert_eq!(
+            importar(&mut con, &sin_fechas(vec![m("uno"), tardio])),
+            Efecto::Actualizada
+        );
+        assert_eq!(fechas(&con), esperadas);
+        // Tampoco se pierde al versionar: sin ella, un ZIP viejo ya no se detectaría.
+        assert_eq!(
+            importar(&mut con, &sin_fechas(vec![m("otra cosa")])),
+            Efecto::Versionada
+        );
+        assert_eq!(fechas(&con), esperadas);
     }
 
     #[test]
