@@ -18,44 +18,82 @@ pub enum Efecto {
     Igual,
 }
 
+/// La fila guardada con ese id, con lo que hace falta para comparar.
+struct Previa {
+    id: i64,
+    huella: Option<String>,
+    titulo: Option<String>,
+    proyecto: Option<String>,
+    tipo: String,
+}
+
 /// Aplica la tabla de «Reimportar» de la spec dentro de la transacción de quien llama:
 /// la importación entera se confirma o se descarta de una vez.
 pub fn fusionar(tx: &Transaction, c: &ConversacionImportada) -> rusqlite::Result<Efecto> {
+    // `@` marca las versiones (`<id>@<n>`): un ZIP manipulado podría colarse en una de ellas.
+    if c.base.id_original.contains('@') {
+        let motivo = format!("id de conversación con @: {}", c.base.id_original);
+        return Err(rusqlite::Error::ToSqlConversionFailure(motivo.into()));
+    }
     let huella = huella_web(c);
-    let previo: Option<(i64, Option<String>)> = tx
+    let previa = tx
         .query_row(
-            "SELECT id, huella FROM conversaciones WHERE fuente=?1 AND id_original=?2",
+            "SELECT id, huella, titulo, proyecto, tipo FROM conversaciones
+             WHERE fuente=?1 AND id_original=?2",
             params![c.base.fuente.as_str(), c.base.id_original],
-            |f| Ok((f.get(0)?, f.get(1)?)),
+            |f| {
+                Ok(Previa {
+                    id: f.get(0)?,
+                    huella: f.get(1)?,
+                    titulo: f.get(2)?,
+                    proyecto: f.get(3)?,
+                    tipo: f.get(4)?,
+                })
+            },
         )
         .optional()?;
-    let Some((id, huella_previa)) = previo else {
-        escribir(tx, c, &huella)?;
+    let Some(p) = previa else {
+        escribir(tx, c, c.titulo.as_deref(), c.proyecto.as_deref(), &huella)?;
         return Ok(Efecto::Nueva);
     };
-    if huella_previa.as_deref() == Some(huella.as_str()) {
+    if p.huella.as_deref() == Some(huella.as_str()) {
+        if datos_distintos(&p, c) {
+            actualizar_datos(tx, p.id, c)?;
+            return Ok(Efecto::Actualizada);
+        }
+        rellenar_original(tx, p.id, c)?;
         return Ok(Efecto::Igual);
     }
-    if solo_anade(&cargar_mensajes(tx, id)?, &c.base.mensajes) {
-        escribir(tx, c, &huella)?;
+    // Un ZIP antiguo trae lo que ya se guardó como versión: no debe volver a ser la vigente.
+    let version: Option<i64> = tx
+        .query_row(
+            "SELECT id FROM conversaciones WHERE version_de = ?1 AND huella = ?2
+             ORDER BY id LIMIT 1",
+            params![p.id, huella],
+            |f| f.get(0),
+        )
+        .optional()?;
+    if let Some(version) = version {
+        rellenar_original(tx, version, c)?;
+        return Ok(Efecto::Igual);
+    }
+    let titulo = c.titulo.as_deref().or(p.titulo.as_deref());
+    let proyecto = c.proyecto.as_deref().or(p.proyecto.as_deref());
+    if solo_anade(&cargar_mensajes(tx, p.id)?, &c.base.mensajes) {
+        escribir(tx, c, titulo, proyecto, &huella)?;
         return Ok(Efecto::Actualizada);
     }
-    versionar(tx, id, c, &huella)?;
+    versionar(tx, p.id, c, titulo, proyecto, &huella)?;
     Ok(Efecto::Versionada)
 }
 
 /// Amplía la huella local con lo que aporta la web. No se toca `huella`: cambiarla reindexaría
-/// todo lo local. Aquí sí se marcan los límites de cada campo y parte, porque una huella
-/// repetida por error haría pasar por `Igual` un contenido distinto y se perdería.
+/// todo lo local. Aquí sí se marcan los límites de cada parte, porque una huella repetida por
+/// error haría pasar por `Igual` un contenido distinto y se perdería. Título, proyecto y tipo
+/// no entran: son datos de la conversación, no contenido, y se actualizan sin crear versión.
 fn huella_web(c: &ConversacionImportada) -> String {
     let mut h = Sha256::new();
     h.update(huella(&c.base));
-    h.update(format!(
-        "|{:?}|{:?}|{}",
-        c.titulo,
-        c.proyecto,
-        c.tipo.as_str()
-    ));
     for m in &c.base.mensajes {
         h.update(format!("|{:?}", m.modelo));
         for p in &m.partes {
@@ -63,6 +101,23 @@ fn huella_web(c: &ConversacionImportada) -> String {
         }
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Un título o proyecto ausente no es un cambio: la exportación solo no lo trae.
+fn datos_distintos(p: &Previa, c: &ConversacionImportada) -> bool {
+    (c.titulo.is_some() && c.titulo != p.titulo)
+        || (c.proyecto.is_some() && c.proyecto != p.proyecto)
+        || c.tipo.as_str() != p.tipo
+}
+
+/// Mismo contenido con otros datos: no se tocan los mensajes ni `importada`, que fecha el contenido.
+fn actualizar_datos(tx: &Transaction, id: i64, c: &ConversacionImportada) -> rusqlite::Result<()> {
+    tx.execute(
+        "UPDATE conversaciones SET titulo = COALESCE(?1, titulo),
+           proyecto = COALESCE(?2, proyecto), tipo = ?3 WHERE id = ?4",
+        params![c.titulo, c.proyecto, c.tipo.as_str(), id],
+    )?;
+    guardar_original(tx, id, c)
 }
 
 /// `true` si la nueva trae algo más y cada mensaje guardado sigue igual en ella. Contar no basta:
@@ -102,6 +157,8 @@ fn versionar(
     tx: &Transaction,
     id_previo: i64,
     c: &ConversacionImportada,
+    titulo: Option<&str>,
+    proyecto: Option<&str>,
     huella: &str,
 ) -> rusqlite::Result<()> {
     let anteriores: i64 = tx.query_row(
@@ -116,7 +173,7 @@ fn versionar(
             id_previo
         ],
     )?;
-    let id = escribir(tx, c, huella)?;
+    let id = escribir(tx, c, titulo, proyecto, huella)?;
     tx.execute(
         "UPDATE conversaciones SET version_de = ?1 WHERE id = ?2 OR version_de = ?2",
         params![id, id_previo],
@@ -124,14 +181,19 @@ fn versionar(
     Ok(())
 }
 
-/// Crea la fila con el id limpio o, si existe, la sustituye por la nueva. Sin original no se
-/// borra el guardado: una importación que no lo trae no debe quitar lo que ya había.
-fn escribir(tx: &Transaction, c: &ConversacionImportada, huella: &str) -> rusqlite::Result<i64> {
+/// Crea la fila con el id limpio o, si existe, la sustituye por la nueva. `titulo` y `proyecto`
+/// ya vienen resueltos: los del ZIP o, si no los trae, los que había.
+fn escribir(
+    tx: &Transaction,
+    c: &ConversacionImportada,
+    titulo: Option<&str>,
+    proyecto: Option<&str>,
+    huella: &str,
+) -> rusqlite::Result<i64> {
     let conv = &c.base;
-    let titulo = c
-        .titulo
-        .clone()
-        .unwrap_or_else(|| titulo_util(c.proyecto.as_deref(), &conv.mensajes));
+    let titulo = titulo
+        .map(str::to_string)
+        .unwrap_or_else(|| titulo_util(proyecto, &conv.mensajes));
     let inicio = c
         .inicio
         .as_ref()
@@ -153,7 +215,7 @@ fn escribir(tx: &Transaction, c: &ConversacionImportada, huella: &str) -> rusqli
             conv.fuente.as_str(),
             conv.id_original,
             conv.descripcion,
-            c.proyecto,
+            proyecto,
             titulo,
             inicio,
             fin,
@@ -166,6 +228,12 @@ fn escribir(tx: &Transaction, c: &ConversacionImportada, huella: &str) -> rusqli
     )?;
     tx.execute("DELETE FROM mensajes WHERE conversacion_id = ?1", [id])?;
     insertar_mensajes(tx, id, conv)?;
+    guardar_original(tx, id, c)?;
+    Ok(id)
+}
+
+/// Sin original no se borra el guardado: una importación que no lo trae no quita lo que había.
+fn guardar_original(tx: &Transaction, id: i64, c: &ConversacionImportada) -> rusqlite::Result<()> {
     if let Some(json) = &c.original {
         tx.execute(
             "INSERT INTO originales(conversacion_id, json) VALUES (?1, ?2)
@@ -173,7 +241,19 @@ fn escribir(tx: &Transaction, c: &ConversacionImportada, huella: &str) -> rusqli
             params![id, json],
         )?;
     }
-    Ok(id)
+    Ok(())
+}
+
+/// Para contenido `Igual`: guarda el original solo si faltaba.
+fn rellenar_original(tx: &Transaction, id: i64, c: &ConversacionImportada) -> rusqlite::Result<()> {
+    if let Some(json) = &c.original {
+        tx.execute(
+            "INSERT INTO originales(conversacion_id, json) VALUES (?1, ?2)
+             ON CONFLICT(conversacion_id) DO NOTHING",
+            params![id, json],
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -539,51 +619,104 @@ mod tests {
     }
 
     #[test]
-    fn cambiar_el_titulo_no_es_igual_y_se_conserva_el_anterior() {
+    fn cambio_de_titulo_no_crea_version() {
         let (_d, mut con) = base();
         importar(&mut con, &conv(vec![m("uno")]));
+        let id = id_de(&con, ID);
+        con.execute("UPDATE conversaciones SET importada = 'marca'", [])
+            .unwrap();
+        let mensaje: i64 = con
+            .query_row("SELECT id FROM mensajes", [], |f| f.get(0))
+            .unwrap();
+
         let mut c = conv(vec![m("uno")]);
         c.titulo = Some("Otro título".to_string());
-        assert_eq!(importar(&mut con, &c), Efecto::Versionada);
-        let id = id_de(&con, ID);
-        let viejo = lector::versiones(&con, id).unwrap()[0].id;
-        let titulo: String = con
-            .query_row(
-                "SELECT titulo FROM conversaciones WHERE id = ?1",
-                [viejo],
-                |f| f.get(0),
-            )
+        c.original = Some("{\"v\":2}".to_string());
+        assert_eq!(importar(&mut con, &c), Efecto::Actualizada);
+
+        assert_eq!(filas(&con), 1);
+        assert_eq!(id_de(&con, ID), id);
+        assert!(lector::versiones(&con, id).unwrap().is_empty());
+        let (titulo, importada): (String, String) = con
+            .query_row("SELECT titulo, importada FROM conversaciones", [], |f| {
+                Ok((f.get(0)?, f.get(1)?))
+            })
             .unwrap();
-        assert_eq!(titulo, "Plan de riego");
+        assert_eq!(titulo, "Otro título");
+        // El contenido no ha cambiado: ni su fecha de entrada ni sus mensajes se rehacen.
+        assert_eq!(importada, "marca");
+        let mismo: i64 = con
+            .query_row("SELECT id FROM mensajes", [], |f| f.get(0))
+            .unwrap();
+        assert_eq!(mismo, mensaje);
+        assert_eq!(original(&con, id).as_deref(), Some("{\"v\":2}"));
+        assert_eq!(importar(&mut con, &c), Efecto::Igual);
     }
 
     #[test]
-    fn proyecto_tipo_y_modelo_entran_en_la_huella() {
-        let ediciones: [fn(&mut ConversacionImportada); 3] = [
+    fn cambio_de_proyecto_o_tipo_actualiza_sin_version() {
+        let ediciones: [fn(&mut ConversacionImportada); 2] = [
             |c| c.proyecto = Some("Huerto".to_string()),
             |c| c.tipo = TipoWeb::Documento,
-            |c| c.base.mensajes[0].modelo = Some("modelo-x".to_string()),
         ];
         for editar in ediciones {
             let (_d, mut con) = base();
             importar(&mut con, &conv(vec![m("uno")]));
             let mut c = conv(vec![m("uno")]);
             editar(&mut c);
-            assert_eq!(importar(&mut con, &c), Efecto::Versionada);
+            assert_eq!(importar(&mut con, &c), Efecto::Actualizada);
+            assert_eq!(filas(&con), 1);
+            assert_eq!(importar(&mut con, &c), Efecto::Igual);
         }
     }
 
     #[test]
-    fn titulo_y_proyecto_no_se_confunden_al_unirse() {
+    fn modelo_entra_en_la_huella() {
+        let (_d, mut con) = base();
+        importar(&mut con, &conv(vec![m("uno")]));
+        let mut c = conv(vec![m("uno")]);
+        c.base.mensajes[0].modelo = Some("modelo-x".to_string());
+        assert_eq!(importar(&mut con, &c), Efecto::Versionada);
+    }
+
+    #[test]
+    fn sin_proyecto_no_borra_el_proyecto() {
+        let datos = |con: &Connection| -> (String, String) {
+            con.query_row(
+                "SELECT titulo, proyecto FROM conversaciones WHERE id_original = ?1",
+                [ID],
+                |f| Ok((f.get(0)?, f.get(1)?)),
+            )
+            .unwrap()
+        };
+        let esperados = ("Plan de riego".to_string(), "Huerto".to_string());
+        let sin_datos = |mensajes| {
+            let mut c = conv(mensajes);
+            c.titulo = None;
+            c.proyecto = None;
+            c
+        };
         let (_d, mut con) = base();
         let mut a = conv(vec![m("uno")]);
-        a.titulo = Some("ab".to_string());
-        a.proyecto = Some("c".to_string());
+        a.proyecto = Some("Huerto".to_string());
         importar(&mut con, &a);
-        let mut b = conv(vec![m("uno")]);
-        b.titulo = Some("a".to_string());
-        b.proyecto = Some("bc".to_string());
-        assert_eq!(importar(&mut con, &b), Efecto::Versionada);
+
+        // Mismo contenido, más mensajes y contenido distinto: en ninguno se pierden.
+        assert_eq!(
+            importar(&mut con, &sin_datos(vec![m("uno")])),
+            Efecto::Igual
+        );
+        assert_eq!(datos(&con), esperados);
+        assert_eq!(
+            importar(&mut con, &sin_datos(vec![m("uno"), m("dos")])),
+            Efecto::Actualizada
+        );
+        assert_eq!(datos(&con), esperados);
+        assert_eq!(
+            importar(&mut con, &sin_datos(vec![m("otra cosa")])),
+            Efecto::Versionada
+        );
+        assert_eq!(datos(&con), esperados);
     }
 
     #[test]
@@ -616,6 +749,91 @@ mod tests {
         assert_eq!(filas(&con), 1);
         assert_eq!(id_de(&con, ID), id);
         assert_eq!(textos(&con, id), ["uno", "dos"]);
+    }
+
+    #[test]
+    fn reimportar_zip_antiguo_no_cambia_la_actual() {
+        let (_d, mut con) = base();
+        importar(&mut con, &conv(vec![m("antigua")]));
+        importar(&mut con, &conv(vec![m("actual")]));
+        let id = id_de(&con, ID);
+        for _ in 0..2 {
+            assert_eq!(importar(&mut con, &conv(vec![m("antigua")])), Efecto::Igual);
+            assert_eq!(id_de(&con, ID), id);
+            assert_eq!(textos(&con, id), ["actual"]);
+            assert_eq!(lector::versiones(&con, id).unwrap().len(), 1);
+            assert_eq!(filas(&con), 2);
+        }
+        assert_eq!(resultados(&con, "actual"), [ID]);
+    }
+
+    #[test]
+    fn leer_version_abre_una_antigua_y_rechaza_la_actual() {
+        let (_d, mut con) = base();
+        importar(&mut con, &conv(vec![m("antigua")]));
+        importar(&mut con, &conv(vec![m("actual")]));
+        let id = id_de(&con, ID);
+        let vieja = lector::versiones(&con, id).unwrap()[0].id;
+
+        let l = lector::leer_version(&con, vieja, &Tramo::default()).unwrap();
+        assert_eq!(l.id_original, format!("{ID}@1"));
+        assert_eq!(
+            l.bloques,
+            [Bloque::Usuario {
+                hora: None,
+                texto: "antigua".to_string()
+            }]
+        );
+        assert!(lector::leer_version(&con, id, &Tramo::default()).is_err());
+        assert!(lector::leer_version(&con, 9_999, &Tramo::default()).is_err());
+        assert!(lector::leer(&con, vieja, &Tramo::default()).is_err());
+    }
+
+    #[test]
+    fn id_con_arroba_se_rechaza() {
+        let (_d, mut con) = base();
+        importar(&mut con, &conv(vec![m("antigua")]));
+        importar(&mut con, &conv(vec![m("actual")]));
+        let vieja = id_de(&con, &format!("{ID}@1"));
+        for id in [format!("{ID}@1"), "nueva@ejemplo".to_string()] {
+            let mut c = conv(vec![m("colada")]);
+            c.base.id_original = id;
+            let tx = con.transaction().unwrap();
+            assert!(fusionar(&tx, &c).is_err());
+            drop(tx);
+        }
+        assert_eq!(filas(&con), 2);
+        assert_eq!(textos(&con, vieja), ["antigua"]);
+    }
+
+    #[test]
+    fn igual_rellena_original_ausente() {
+        let (_d, mut con) = base();
+        let sin_original = conv(vec![m("uno")]);
+        importar(&mut con, &sin_original);
+        let id = id_de(&con, ID);
+        let mut con_original = sin_original.clone();
+        con_original.original = Some("{\"v\":1}".to_string());
+        assert_eq!(importar(&mut con, &con_original), Efecto::Igual);
+        assert_eq!(original(&con, id).as_deref(), Some("{\"v\":1}"));
+
+        // Solo rellena: el que ya estaba no se pisa.
+        con_original.original = Some("{\"v\":2}".to_string());
+        assert_eq!(importar(&mut con, &con_original), Efecto::Igual);
+        assert_eq!(original(&con, id).as_deref(), Some("{\"v\":1}"));
+    }
+
+    #[test]
+    fn igual_a_una_version_rellena_su_original_y_no_el_de_la_actual() {
+        let (_d, mut con) = base();
+        importar(&mut con, &conv(vec![m("antigua")]));
+        let vieja = id_de(&con, ID);
+        importar(&mut con, &conv(vec![m("actual")]));
+        let mut c = conv(vec![m("antigua")]);
+        c.original = Some("{\"v\":1}".to_string());
+        assert_eq!(importar(&mut con, &c), Efecto::Igual);
+        assert_eq!(original(&con, vieja).as_deref(), Some("{\"v\":1}"));
+        assert_eq!(original(&con, id_de(&con, ID)), None);
     }
 
     #[test]

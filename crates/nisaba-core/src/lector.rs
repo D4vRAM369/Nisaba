@@ -270,6 +270,32 @@ fn cargar_hijos(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<Vec
 }
 
 pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Result<Lectura> {
+    leer_de(
+        conn,
+        "conversaciones_visibles WHERE id = ?1",
+        conversacion_id,
+        t,
+    )
+}
+
+/// Lee una versión anterior, que `leer` no ve porque no es visible. Cualquier otra fila es un
+/// error. Solo en la tablilla web: la local no tiene `version_de`.
+pub fn leer_version(conn: &Connection, version_id: i64, t: &Tramo) -> rusqlite::Result<Lectura> {
+    leer_de(
+        conn,
+        "conversaciones WHERE id = ?1 AND version_de IS NOT NULL",
+        version_id,
+        t,
+    )
+}
+
+/// `origen` es SQL fijo de este módulo: tabla y condición de la fila que se puede leer.
+fn leer_de(
+    conn: &Connection,
+    origen: &str,
+    conversacion_id: i64,
+    t: &Tramo,
+) -> rusqlite::Result<Lectura> {
     #[allow(clippy::type_complexity)]
     let (fuente, id_original, titulo, hoja, cwd, es_subagente): (
         String,
@@ -279,8 +305,9 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
         Option<String>,
         bool,
     ) = conn.query_row(
-        "SELECT fuente, id_original, titulo, hoja, cwd, padre_id IS NOT NULL
-         FROM conversaciones_visibles WHERE id = ?1",
+        &format!(
+            "SELECT fuente, id_original, titulo, hoja, cwd, padre_id IS NOT NULL FROM {origen}"
+        ),
         [conversacion_id],
         |r| {
             Ok((
