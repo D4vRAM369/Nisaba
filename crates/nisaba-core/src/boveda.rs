@@ -55,6 +55,12 @@ impl LlaveMaestra {
     pub fn hex(&self) -> Zeroizing<String> {
         Zeroizing::new(HEXLOWER.encode(self.0.as_slice()))
     }
+
+    /// Llave fija para los tests de otros módulos, sin pasar por Argon2.
+    #[cfg(test)]
+    pub(crate) fn de_prueba(byte: u8) -> Self {
+        LlaveMaestra(Zeroizing::new([byte; BYTES_LLAVE]))
+    }
 }
 
 // A mano: un `derive` imprimiría la llave en cualquier `{:?}` o `unwrap` que falle.

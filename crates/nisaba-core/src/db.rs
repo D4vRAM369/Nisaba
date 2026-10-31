@@ -40,12 +40,18 @@ pub fn abrir(ruta: &Path) -> rusqlite::Result<Connection> {
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     }
     let mut con = Connection::open(ruta)?;
+    preparar(&mut con)?;
+    Ok(con)
+}
+
+/// Lo común a la tablilla local y a la cifrada: espera, WAL, claves ajenas, esquema y migración.
+/// En la cifrada la llave ya debe estar puesta: SQLCipher la exige antes de leer nada.
+pub(crate) fn preparar(con: &mut Connection) -> rusqlite::Result<()> {
     con.busy_timeout(ESPERA)?;
-    activar_wal(&con)?;
+    activar_wal(con)?;
     con.pragma_update(None, "foreign_keys", true)?;
     con.execute_batch(ESQUEMA)?;
-    migrar(&mut con)?;
-    Ok(con)
+    migrar(con)
 }
 
 /// Pasar a WAL pide acceso exclusivo y SQLite no aplica ahí `busy_timeout`: se reintenta a mano.
@@ -74,6 +80,10 @@ fn migrar(con: &mut Connection) -> rusqlite::Result<()> {
     // leer la versión: quien llegue segundo espera y ve lo que migró el primero.
     let tx = con.transaction_with_behavior(TransactionBehavior::Immediate)?;
     let actual = version(&tx)?;
+    // La tablilla web va por delante (versión 3): nunca se le baja la versión.
+    if actual >= VERSION {
+        return Ok(());
+    }
     if actual < 1 {
         // v1: carpeta de trabajo. Se vacían firma y huella para que la siguiente
         // pasada relea cada fuente (o su copia) y rellene `cwd`.
