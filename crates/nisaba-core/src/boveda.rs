@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 
 use aes_gcm::aead::Aead;
 use aes_gcm::{Aes256Gcm, KeyInit};
-use argon2::{Algorithm, Argon2, Params, Version};
+use argon2::{Algorithm, Argon2, Block, Params, Version};
 use data_encoding::{BASE32, BASE64, HEXLOWER};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
@@ -30,11 +30,12 @@ const BYTES_NONCE: usize = 12;
 const BYTES_CIFRADO: usize = BYTES_LLAVE + 16;
 const CARACTERES_POR_GRUPO: usize = 4;
 
-// El diseño parte de m=128 MiB, t=3, que aquí abría en 0,26 s (Ryzen 5 5600G, release). Se sube
-// `t` hasta ~1 s y no `m`: mantiene la memoria prevista también en portátiles modestos.
+// El diseño parte de m=128 MiB, t=3, que en un Ryzen 5 5600G (release) abría en 0,26 s. Con t=8
+// esa máquina tarda ~0,6 s, para quedar en ~1 s en un portátil normal, que es la meta del diseño.
+// Se sube `t` y no `m` para mantener la memoria prevista.
 const PARAMETROS: Parametros = Parametros {
     m_kib: 128 * 1024,
-    t: 14,
+    t: 8,
     p: 1,
 };
 
@@ -83,7 +84,7 @@ impl fmt::Display for ErrorBoveda {
                 f,
                 "La contraseña debe tener al menos {CONTRASENA_MINIMA} caracteres."
             ),
-            Self::Danada(detalle) => write!(f, "El archivo {BOVEDA} está dañado: {detalle}."),
+            Self::Danada(detalle) => write!(f, "Problema con {BOVEDA}: {detalle}."),
             Self::Io(detalle) => write!(f, "No puedo usar {BOVEDA}: {detalle}."),
         }
     }
@@ -270,15 +271,32 @@ fn derivar(
     sal: &[u8; BYTES_SAL],
     argon2: Parametros,
 ) -> Result<Aes256Gcm, ErrorBoveda> {
+    let motor = argon2.argon2()?;
+    let mut bloques = reservar_bloques(motor.params().block_count())?;
     let mut derivada = Zeroizing::new([0; BYTES_LLAVE]);
-    argon2
-        .argon2()?
-        .hash_password_into(secreto, sal, derivada.as_mut_slice())
-        // Con parámetros y sal ya validados solo queda quedarse sin memoria. Nunca `Incorrecta`:
-        // haría creer al usuario que olvidó la contraseña.
+    motor
+        .hash_password_into_with_memory(
+            secreto,
+            sal,
+            derivada.as_mut_slice(),
+            bloques.as_mut_slice(),
+        )
+        // Nunca `Incorrecta`: haría creer al usuario que olvidó la contraseña.
         .map_err(|e| ErrorBoveda::Io(format!("Argon2 falló: {e}")))?;
     Aes256Gcm::new_from_slice(derivada.as_slice())
         .map_err(|_| ErrorBoveda::Io("llave derivada de tamaño inválido".to_string()))
+}
+
+/// `hash_password_into` usa memoria propia que al soltarse solo se libera, y de esos bloques sale
+/// la llave derivada. Con la nuestra se borra. `try_reserve_exact` porque `vec!` abortaría el
+/// proceso sin memoria en vez de devolver un error.
+fn reservar_bloques(cuantos: usize) -> Result<Zeroizing<Vec<Block>>, ErrorBoveda> {
+    let mut bloques = Zeroizing::new(Vec::new());
+    bloques
+        .try_reserve_exact(cuantos)
+        .map_err(|_| ErrorBoveda::Io("no hay memoria suficiente para Argon2".to_string()))?;
+    bloques.resize(cuantos, Block::new());
+    Ok(bloques)
 }
 
 fn envolver(
@@ -348,10 +366,17 @@ fn interpretar_codigo(codigo: &str) -> Option<Zeroizing<Vec<u8>>> {
 }
 
 fn leer(home: &Path) -> Result<Boveda, ErrorBoveda> {
-    let bytes = fs::read(home.join(BOVEDA)).map_err(|e| match e.kind() {
-        io::ErrorKind::NotFound => ErrorBoveda::NoExiste,
-        _ => io(e),
-    })?;
+    let bytes = match fs::read(home.join(BOVEDA)) {
+        Ok(bytes) => bytes,
+        // Decir "no existe" invitaría a crear otra bóveda, cuya llave no abriría esta tablilla.
+        Err(e) if e.kind() == io::ErrorKind::NotFound && existe(&home.join(TABLILLA_WEB))? => {
+            return Err(ErrorBoveda::Danada(format!(
+                "falta, y sin él {TABLILLA_WEB} no se puede recuperar; restáuralo de una copia"
+            )));
+        }
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Err(ErrorBoveda::NoExiste),
+        Err(e) => return Err(io(e)),
+    };
     let boveda: Boveda =
         serde_json::from_slice(&bytes).map_err(|_| danada("no es una bóveda válida"))?;
     if boveda.version != VERSION {
@@ -413,11 +438,28 @@ fn reemplazar(temporal: &Path, destino: &Path) -> Result<(), ErrorBoveda> {
 /// dejarían viva solo la segunda llave aunque la primera ya hubiese escrito su tablilla.
 /// `hard_link` falla si el destino existe, y esa comprobación es atómica.
 fn colocar_sin_pisar(temporal: &Path, destino: &Path) -> Result<(), ErrorBoveda> {
-    match fs::hard_link(temporal, destino) {
+    resolver_enlace(fs::hard_link(temporal, destino), temporal, destino)
+}
+
+fn resolver_enlace(
+    enlace: io::Result<()>,
+    temporal: &Path,
+    destino: &Path,
+) -> Result<(), ErrorBoveda> {
+    match enlace {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(ErrorBoveda::YaExiste),
         // FAT y compañía no tienen enlaces duros: queda la comprobación previa de `guardar`.
-        Err(_) => reemplazar(temporal, destino),
+        // Con cualquier otro error, `rename` podría pisar lo que `hard_link` no pudo comprobar.
+        Err(e)
+            if matches!(
+                e.kind(),
+                io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
+            ) =>
+        {
+            reemplazar(temporal, destino)
+        }
+        Err(e) => Err(io(e)),
     }
 }
 
@@ -703,7 +745,7 @@ mod tests {
     #[test]
     fn parametros_de_produccion_son_los_calibrados() {
         assert_eq!(PARAMETROS.m_kib, 128 * 1024);
-        assert_eq!(PARAMETROS.t, 14);
+        assert_eq!(PARAMETROS.t, 8);
         assert_eq!(PARAMETROS.p, 1);
     }
 
@@ -854,6 +896,86 @@ mod tests {
             Err(ErrorBoveda::YaExiste)
         );
         assert_eq!(fs::read_to_string(&destino).unwrap(), "del otro proceso");
+    }
+
+    #[test]
+    fn colocar_sin_pisar_propaga_si_falta_la_carpeta() {
+        let d = tempdir().unwrap();
+        let temporal = d.path().join("t");
+        fs::write(&temporal, "mía").unwrap();
+        let destino = d.path().join("no-existe").join(BOVEDA);
+        assert!(matches!(
+            colocar_sin_pisar(&temporal, &destino),
+            Err(ErrorBoveda::Io(_))
+        ));
+    }
+
+    #[test]
+    fn solo_sin_enlaces_duros_se_recurre_a_rename() {
+        let d = tempdir().unwrap();
+        let (temporal, destino) = (d.path().join("t"), d.path().join(BOVEDA));
+        fs::write(&destino, "previo").unwrap();
+
+        // Aquí `rename` sí funcionaría y pisaría `destino`: solo lo impide no intentarlo.
+        fs::write(&temporal, "mía").unwrap();
+        let otro = io::Error::from(io::ErrorKind::StorageFull);
+        assert!(matches!(
+            resolver_enlace(Err(otro), &temporal, &destino),
+            Err(ErrorBoveda::Io(_))
+        ));
+        assert_eq!(fs::read_to_string(&destino).unwrap(), "previo");
+
+        for tipo in [io::ErrorKind::Unsupported, io::ErrorKind::PermissionDenied] {
+            fs::write(&temporal, "mía").unwrap();
+            fs::remove_file(&destino).unwrap();
+            resolver_enlace(Err(tipo.into()), &temporal, &destino).unwrap();
+            assert_eq!(fs::read_to_string(&destino).unwrap(), "mía");
+        }
+    }
+
+    #[test]
+    fn falta_boveda_con_tablilla_presente_es_danada() {
+        let (d, _, codigo) = creada();
+        fs::remove_file(d.path().join(BOVEDA)).unwrap();
+        fs::write(d.path().join(TABLILLA_WEB), "x").unwrap();
+
+        let e = error(abrir(d.path(), CONTRASENA));
+        assert!(matches!(e, ErrorBoveda::Danada(_)), "{e:?}");
+        assert!(e.to_string().contains("no se puede recuperar"), "{e}");
+        assert!(e.to_string().contains(BOVEDA), "{e}");
+        assert_eq!(e, error(recuperar(d.path(), &codigo, CONTRASENA)));
+        assert_eq!(
+            e,
+            error(cambiar_contrasena(d.path(), CONTRASENA, CONTRASENA))
+        );
+    }
+
+    #[test]
+    fn sin_memoria_es_error_y_no_aborta() {
+        assert!(matches!(
+            reservar_bloques(usize::MAX),
+            Err(ErrorBoveda::Io(_))
+        ));
+        assert_eq!(reservar_bloques(8).unwrap().len(), 8);
+    }
+
+    #[test]
+    fn la_memoria_propia_no_cambia_la_derivacion() {
+        // Si cambiase, ninguna bóveda escrita antes volvería a abrirse.
+        let llave = [7; BYTES_LLAVE];
+        let e = envolver(&llave, CONTRASENA.as_bytes(), BARATOS).unwrap();
+        let (sal, nonce, cifrado) = e.partes().unwrap();
+        let mut derivada = [0; BYTES_LLAVE];
+        BARATOS
+            .argon2()
+            .unwrap()
+            .hash_password_into(CONTRASENA.as_bytes(), &sal, &mut derivada)
+            .unwrap();
+        let claro = Aes256Gcm::new_from_slice(&derivada)
+            .unwrap()
+            .decrypt((&nonce).into(), cifrado.as_slice())
+            .unwrap();
+        assert_eq!(claro, llave);
     }
 
     #[test]
