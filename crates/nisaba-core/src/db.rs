@@ -1,5 +1,9 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, ErrorCode, TransactionBehavior};
 use std::path::Path;
+use std::time::{Duration, Instant};
+
+const VERSION: i64 = 2;
+const ESPERA: Duration = Duration::from_secs(5);
 
 const ESQUEMA: &str = "
 CREATE TABLE IF NOT EXISTS conversaciones(
@@ -35,48 +39,70 @@ pub fn abrir(ruta: &Path) -> rusqlite::Result<Connection> {
         std::fs::create_dir_all(dir)
             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
     }
-    let con = Connection::open(ruta)?;
-    con.busy_timeout(std::time::Duration::from_millis(5000))?;
-    con.pragma_update(None, "journal_mode", "WAL")?;
+    let mut con = Connection::open(ruta)?;
+    con.busy_timeout(ESPERA)?;
+    activar_wal(&con)?;
     con.pragma_update(None, "foreign_keys", true)?;
     con.execute_batch(ESQUEMA)?;
-    migrar(&con)?;
+    migrar(&mut con)?;
     Ok(con)
 }
 
+/// Pasar a WAL pide acceso exclusivo y SQLite no aplica ahí `busy_timeout`: se reintenta a mano.
+/// Solo compite la primera apertura; después el modo ya está guardado en el archivo.
+fn activar_wal(con: &Connection) -> rusqlite::Result<()> {
+    let limite = Instant::now() + ESPERA;
+    loop {
+        match con.pragma_update(None, "journal_mode", "WAL") {
+            Err(e)
+                if e.sqlite_error_code() == Some(ErrorCode::DatabaseBusy)
+                    && Instant::now() < limite =>
+            {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            r => return r,
+        }
+    }
+}
+
 /// Migraciones por `PRAGMA user_version`. Nunca borran contenido.
-fn migrar(con: &Connection) -> rusqlite::Result<()> {
-    let version: i64 = con.query_row("PRAGMA user_version", [], |f| f.get(0))?;
-    if version < 1 {
+fn migrar(con: &mut Connection) -> rusqlite::Result<()> {
+    if version(con)? >= VERSION {
+        return Ok(());
+    }
+    // GUI y MCP pueden abrir la tablilla a la vez. `Immediate` reserva la escritura antes de
+    // leer la versión: quien llegue segundo espera y ve lo que migró el primero.
+    let tx = con.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let actual = version(&tx)?;
+    if actual < 1 {
         // v1: carpeta de trabajo. Se vacían firma y huella para que la siguiente
         // pasada relea cada fuente (o su copia) y rellene `cwd`.
-        con.execute_batch(
-            "BEGIN;
-             ALTER TABLE conversaciones ADD COLUMN cwd TEXT;
+        tx.execute_batch(
+            "ALTER TABLE conversaciones ADD COLUMN cwd TEXT;
              UPDATE archivos SET mtime = NULL;
-             UPDATE conversaciones SET huella = NULL;
-             PRAGMA user_version = 1;
-             COMMIT;",
+             UPDATE conversaciones SET huella = NULL;",
         )?;
     }
-    if version < 2 {
+    if actual < 2 {
         // v2: carpetas excluidas. `conversaciones.excluida` la mantiene `exclusiones`;
         // la vista es el único filtro que usan búsqueda, recientes y lector.
-        con.execute_batch(
-            "BEGIN;
-             CREATE TABLE exclusiones(ruta TEXT PRIMARY KEY, desde TEXT NOT NULL);
+        tx.execute_batch(
+            "CREATE TABLE exclusiones(ruta TEXT PRIMARY KEY, desde TEXT NOT NULL);
              ALTER TABLE archivos ADD COLUMN cwd TEXT;
              ALTER TABLE conversaciones ADD COLUMN excluida INTEGER NOT NULL DEFAULT 0;
              UPDATE archivos SET cwd = (SELECT c.cwd FROM conversaciones c WHERE c.ruta = archivos.ruta);
              CREATE VIEW conversaciones_visibles AS
                SELECT c.* FROM conversaciones c
                WHERE c.excluida = 0 AND NOT EXISTS
-                 (SELECT 1 FROM conversaciones p WHERE p.id = c.padre_id AND p.excluida = 1);
-             PRAGMA user_version = 2;
-             COMMIT;",
+                 (SELECT 1 FROM conversaciones p WHERE p.id = c.padre_id AND p.excluida = 1);",
         )?;
     }
-    Ok(())
+    tx.pragma_update(None, "user_version", VERSION)?;
+    tx.commit()
+}
+
+fn version(con: &Connection) -> rusqlite::Result<i64> {
+    con.query_row("PRAGMA user_version", [], |f| f.get(0))
 }
 
 #[cfg(test)]
@@ -110,6 +136,35 @@ mod tests {
         sembrar(&con);
         assert_eq!(coincidencias(&con, "medicacion"), 1);
         assert_eq!(coincidencias(&con, "pillmate"), 1);
+    }
+
+    #[test]
+    fn dos_procesos_abren_a_la_vez_una_tablilla_sin_migrar() {
+        for _ in 0..20 {
+            let dir = tempfile::tempdir().unwrap();
+            let ruta = dir.path().join("tablilla.db");
+            let salida = std::sync::Barrier::new(8);
+            let errores: Vec<String> = std::thread::scope(|s| {
+                let hilos: Vec<_> = (0..8)
+                    .map(|_| {
+                        s.spawn(|| {
+                            salida.wait();
+                            abrir(&ruta).err().map(|e| e.to_string())
+                        })
+                    })
+                    .collect();
+                hilos
+                    .into_iter()
+                    .filter_map(|h| h.join().unwrap())
+                    .collect()
+            });
+            assert!(errores.is_empty(), "{errores:?}");
+            let con = abrir(&ruta).unwrap();
+            let version: i64 = con
+                .query_row("PRAGMA user_version", [], |f| f.get(0))
+                .unwrap();
+            assert_eq!(version, 2);
+        }
     }
 
     #[test]
