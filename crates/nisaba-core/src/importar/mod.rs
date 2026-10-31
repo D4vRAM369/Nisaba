@@ -3,6 +3,7 @@
 pub mod fusion;
 mod zip;
 
+use std::collections::HashSet;
 use std::path::Path;
 
 use rusqlite::{Connection, ErrorCode, TransactionBehavior};
@@ -54,7 +55,9 @@ fn detectar<'a>(lector: &Lector, formatos: &'a [Formato]) -> Result<&'a Formato,
     formatos
         .iter()
         .find(|f| (f.reconoce)(&nombres))
-        .ok_or_else(|| "formato desconocido: no es una exportación admitida".to_string())
+        .ok_or_else(|| {
+            "formato desconocido: no es una exportación de Claude.ai ni de ChatGPT".to_string()
+        })
 }
 
 pub(crate) fn importar_con(
@@ -67,25 +70,39 @@ pub(crate) fn importar_con(
 
 /// Cada conversación se fusiona al salir del lector, sin acumularlas en memoria, dentro de una
 /// sola transacción que solo se confirma al acabar: si algo falla, soltarla lo deshace todo.
-/// `Immediate` toma la escritura desde el principio: otra importación espera aquí en lugar de
-/// chocar a mitad, cuando ya no podría esperar porque partió de una foto vieja de la base.
+/// `Immediate` toma la escritura desde el principio: otra importación espera aquí, hasta
+/// `busy_timeout`, en lugar de chocar a mitad, cuando ya no podría esperar porque partió de una
+/// foto vieja de la base.
 fn importar_hasta(
     conn: &mut Connection,
     zip: &Path,
     formatos: &[Formato],
     limite: u64,
 ) -> Result<Resumen, String> {
+    debug_assert_eq!(
+        conn.query_row("PRAGMA temp_store", [], |f| f.get::<_, i64>(0)),
+        Ok(2),
+        "temp_store: la conexión debe guardar los temporales en memoria"
+    );
     let mut lector = Lector::abrir(zip, limite)?;
     let formato = detectar(&lector, formatos)?;
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|e| match e.sqlite_error_code() {
-            Some(ErrorCode::DatabaseBusy) => "hay otra importación en curso".to_string(),
+            Some(ErrorCode::DatabaseBusy) => {
+                "el archivo está ocupado: inténtalo cuando acabe lo que lo usa".to_string()
+            }
             _ => format!("no se pudo empezar la importación: {}", motivo(&e)),
         })?;
 
     let mut resumen = Resumen::default();
     let mut vistas = 0;
+    let mut sin_repetir = HashSet::new();
+    let mut anotar = |avisos: &mut Vec<String>, aviso: String| {
+        if sin_repetir.insert(aviso.clone()) {
+            avisos.push(aviso);
+        }
+    };
     let mut guardar = |c: ConversacionImportada| {
         vistas += 1;
         let efecto = fusionar(&tx, &c)
@@ -96,9 +113,16 @@ fn importar_hasta(
             Efecto::Versionada => resumen.versionadas += 1,
             Efecto::Igual => resumen.iguales += 1,
         }
+        for aviso in c.base.avisos {
+            anotar(&mut resumen.avisos, aviso);
+        }
         Ok(())
     };
-    (formato.leer)(&mut lector, &mut guardar, &mut resumen.avisos).map_err(|e| lector.situar(e))?;
+    let mut del_formato = vec![];
+    (formato.leer)(&mut lector, &mut guardar, &mut del_formato).map_err(|e| lector.situar(e))?;
+    for aviso in del_formato {
+        anotar(&mut resumen.avisos, aviso);
+    }
 
     tx.commit()
         .map_err(|e| format!("no se pudo confirmar la importación: {}", motivo(&e)))?;
@@ -115,7 +139,7 @@ fn motivo(e: &rusqlite::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::zip::recorrer_array;
+    use super::zip::{recorrer_array, recorrer_array_hasta};
     use super::*;
     use crate::archivo_web;
     use crate::boveda::LlaveMaestra;
@@ -231,6 +255,36 @@ mod tests {
         nombre: "ruta",
         reconoce: |_| true,
         leer: leer_ruta_mala,
+    };
+
+    /// Un tope por elemento pequeño, como el real pero alcanzable en una prueba.
+    fn leer_con_tope(l: &mut Lector, salida: Salida, _: &mut Vec<String>) -> Result<(), String> {
+        recorrer_array_hasta(l.entrada(ENTRADA)?, 200, |f: Fila| salida(conversacion(f)))
+    }
+
+    const CON_TOPE: Formato = Formato {
+        nombre: "tope",
+        reconoce: tiene_entrada,
+        leer: leer_con_tope,
+    };
+
+    /// Cada conversación trae un aviso común y uno propio; el formato repite el común.
+    fn leer_avisos(l: &mut Lector, salida: Salida, avisos: &mut Vec<String>) -> Result<(), String> {
+        recorrer_array(l.entrada(ENTRADA)?, |f: Fila| {
+            let propio = format!("aviso de {}", f.id);
+            let mut c = conversacion(f);
+            c.base.avisos = vec!["parte sin leer".to_string(), propio];
+            salida(c)
+        })?;
+        avisos.push("parte sin leer".to_string());
+        avisos.push("aviso del formato".to_string());
+        Ok(())
+    }
+
+    const CON_AVISOS: Formato = Formato {
+        nombre: "avisos",
+        reconoce: tiene_entrada,
+        leer: leer_avisos,
     };
 
     fn fila(id: &str, textos: &[&str]) -> serde_json::Value {
@@ -367,6 +421,8 @@ mod tests {
             reconocer(&ruta).unwrap_err(),
         ] {
             assert!(e.contains("desconocido"), "{e}");
+            assert!(e.contains("Claude.ai"), "{e}");
+            assert!(e.contains("ChatGPT"), "{e}");
             assert!(!e.contains(MARCADOR), "{e}");
         }
         assert_eq!(estado(&con), [0; 4]);
@@ -432,7 +488,8 @@ mod tests {
         declarar_tamano(&mut bytes, 40);
         std::fs::write(&zip, bytes).unwrap();
 
-        // La cabecera dice que cabe de sobra; lo real no. Se corta antes de llegar al final.
+        // Solo prueba que falla sin escribir: la biblioteca corta al pasar del tamaño declarado,
+        // antes de llegar a `limite`. El contador lo prueba `el_limite_suma_todas_las_entradas`.
         assert!(importar_hasta(&mut con, &zip, &[PRUEBA], 1_000).is_err());
         assert_eq!(estado(&con), [0; 4]);
     }
@@ -512,6 +569,62 @@ mod tests {
         assert_eq!(r.nuevas, 2000);
     }
 
+    #[test]
+    fn elemento_gigante_revierte_lo_ya_importado() {
+        let (dir, mut con) = base();
+        let relleno = "a".repeat(1_000);
+        let zip = zip_de(
+            dir.path(),
+            &[fila("a", &["hola"]), fila("b", &[relleno.as_str()])],
+        );
+        let e = importar_con(&mut con, &zip, &[CON_TOPE]).unwrap_err();
+        assert!(e.contains("límite"), "{e}");
+        assert!(e.contains(ENTRADA), "{e}");
+        assert_eq!(estado(&con), [0; 4]);
+    }
+
+    #[test]
+    fn avisos_de_conversacion_llegan_al_resumen() {
+        let (dir, mut con) = base();
+        let zip = zip_de(dir.path(), &[fila("a", &["hola"]), fila("b", &["adios"])]);
+        let r = importar_con(&mut con, &zip, &[CON_AVISOS]).unwrap();
+        assert_eq!(
+            r.avisos,
+            [
+                "parte sin leer",
+                "aviso de a",
+                "aviso de b",
+                "aviso del formato"
+            ]
+        );
+    }
+
+    #[test]
+    fn archivo_ocupado_lo_dice_y_no_escribe() {
+        let (dir, mut con) = base();
+        let llave = LlaveMaestra::de_prueba(50);
+        let otra = archivo_web::abrir(&dir.path().join("casa"), &llave).unwrap();
+        otra.execute_batch("BEGIN IMMEDIATE").unwrap();
+        con.busy_timeout(Duration::from_millis(20)).unwrap();
+
+        let zip = zip_de(dir.path(), &[fila("a", &["hola"])]);
+        let e = importar_con(&mut con, &zip, &[PRUEBA]).unwrap_err();
+        assert!(e.contains("ocupado"), "{e}");
+        otra.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(estado(&con), [0; 4]);
+    }
+
+    /// Una conexión sin `temp_store = MEMORY` podría dejar texto claro en la carpeta temporal.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "temp_store")]
+    fn una_conexion_con_temporales_en_disco_se_rechaza_al_empezar() {
+        let dir = tempdir().unwrap();
+        let zip = zip_de(dir.path(), &[fila("a", &["hola"])]);
+        let mut con = Connection::open_in_memory().unwrap();
+        let _ = importar_con(&mut con, &zip, &[PRUEBA]);
+    }
+
     /// `TMPDIR` es de todo el proceso: cambiarlo aquí afectaría a las pruebas paralelas. Por eso
     /// la importación corre en un hijo, el mismo binario de pruebas con una sola prueba.
     #[test]
@@ -544,8 +657,10 @@ mod tests {
         assert!(restos.is_empty(), "{restos:?}");
     }
 
+    /// Importaciones breves: la espera dura lo que `busy_timeout`, y si no alcanza lo dice
+    /// `archivo_ocupado_lo_dice_y_no_escribe`.
     #[test]
-    fn dos_importaciones_a_la_vez_esperan() {
+    fn dos_importaciones_breves_se_turnan() {
         let dir = tempdir().unwrap();
         let casa = dir.path().join("casa");
         let filas: Vec<_> = (0..4).map(|i| fila(&format!("c{i}"), &["hola"])).collect();
