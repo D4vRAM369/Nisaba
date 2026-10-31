@@ -355,23 +355,22 @@ pub fn resolver(conn: &Connection, id_publico_txt: &str) -> rusqlite::Result<Res
     let Some((prefijo, resto)) = id_publico_txt.split_once('-') else {
         return Ok(Resolucion::Ninguno);
     };
-    let Some(fuente) = [Fuente::ClaudeCode, Fuente::Codex]
-        .into_iter()
-        .find(|f| f.prefijo() == prefijo)
-    else {
+    let Some(fuente) = Fuente::TODAS.into_iter().find(|f| f.prefijo() == prefijo) else {
         return Ok(Resolucion::Ninguno);
     };
     if resto.is_empty() {
         return Ok(Resolucion::Ninguno);
     }
     // substr en vez de LIKE: los ids pueden llevar `_` o `%`.
+    // Las versiones anteriores comparten comienzo y tienen ids más bajos: van al final para que
+    // el límite no deje fuera la conversación vigente.
     let mut stmt = conn.prepare(
-        "SELECT id, id_original, id IN (SELECT id FROM conversaciones_visibles)
+        "SELECT id, id_original, id IN (SELECT id FROM conversaciones_visibles) AS visible
          FROM conversaciones
          WHERE fuente = ?1
            AND CASE WHEN fuente = 'codex' OR substr(id_original, 1, 6) = 'agent-'
                     THEN substr(id_original, -?3) ELSE substr(id_original, 1, ?3) END = ?2
-         ORDER BY id LIMIT 5",
+         ORDER BY fuente IN ('claude-web','chatgpt') AND NOT visible, id LIMIT 5",
     )?;
     let todas: Vec<(i64, String, bool)> = stmt
         .query_map(
@@ -385,7 +384,8 @@ pub fn resolver(conn: &Connection, id_publico_txt: &str) -> rusqlite::Result<Res
         .map(|(id, o, _)| (*id, o.clone()))
         .collect();
     Ok(match filas.len() {
-        0 if !todas.is_empty() => Resolucion::Excluida,
+        // En la web lo invisible es una versión anterior: nadie la excluyó.
+        0 if !todas.is_empty() && !fuente.es_web() => Resolucion::Excluida,
         0 => Resolucion::Ninguno,
         1 => Resolucion::Uno(filas[0].0),
         _ => Resolucion::Ambiguo(
@@ -425,7 +425,8 @@ pub fn recientes_desde(
     f: &Filtros,
     desplazamiento: usize,
 ) -> rusqlite::Result<Respuesta> {
-    const CONDICION: &str = "c.padre_id IS NULL AND c.fuente IN ('claude-code','codex')
+    const CONDICION: &str =
+        "c.padre_id IS NULL AND c.fuente IN ('claude-code','codex','claude-web','chatgpt')
         AND (?1 IS NULL OR c.fuente=?1)
         AND (?2 IS NULL OR c.proyecto=?2)
         AND (?3 IS NULL OR c.fin>=?3)";
@@ -475,4 +476,67 @@ pub fn recientes_desde(
         total_sesiones,
         sugerencia: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::archivo_web;
+    use crate::boveda::LlaveMaestra;
+    use crate::modelo::es_id_web;
+    use rusqlite::Connection;
+
+    fn sembrar(con: &Connection, fuente: &str, id_original: &str) -> i64 {
+        con.execute(
+            "INSERT INTO conversaciones(fuente, id_original) VALUES (?1, ?2)",
+            [fuente, id_original],
+        )
+        .unwrap();
+        con.last_insert_rowid()
+    }
+
+    #[test]
+    fn prefijos_web_resuelven() {
+        let dir = tempfile::tempdir().unwrap();
+        let con = archivo_web::abrir(dir.path(), &LlaveMaestra::de_prueba(41)).unwrap();
+        let cw = sembrar(&con, "claude-web", "aaaa1111-resto");
+        let gpt = sembrar(&con, "chatgpt", "bbbb2222-resto");
+        assert_eq!(
+            id_publico(Fuente::ClaudeWeb, "aaaa1111-resto"),
+            "cw-aaaa1111"
+        );
+        assert_eq!(
+            id_publico(Fuente::ChatGpt, "bbbb2222-resto"),
+            "gpt-bbbb2222"
+        );
+        assert_eq!(resolver(&con, "cw-aaaa1111").unwrap(), Resolucion::Uno(cw));
+        assert_eq!(
+            resolver(&con, "gpt-bbbb2222").unwrap(),
+            Resolucion::Uno(gpt)
+        );
+        assert_eq!(resolver(&con, "cw-bbbb2222").unwrap(), Resolucion::Ninguno);
+        assert_eq!(resolver(&con, "cc-aaaa1111").unwrap(), Resolucion::Ninguno);
+    }
+
+    #[test]
+    fn es_id_web_distingue_prefijos() {
+        assert!(es_id_web("cw-aaaa1111"));
+        assert!(es_id_web("gpt-aaaa1111"));
+        assert!(!es_id_web("cc-aaaa1111"));
+        assert!(!es_id_web("cx-aaaa1111"));
+        assert!(!es_id_web("cwaaaa1111"));
+        assert!(!es_id_web("gptx-aaaa1111"));
+        assert!(!es_id_web(""));
+    }
+
+    #[test]
+    fn fuentes_de_ida_y_vuelta() {
+        for f in Fuente::TODAS {
+            assert_eq!(Fuente::desde_str(f.as_str()), Some(f));
+        }
+        assert_eq!(Fuente::desde_str("claude-web"), Some(Fuente::ClaudeWeb));
+        assert_eq!(Fuente::desde_str("chatgpt"), Some(Fuente::ChatGpt));
+        assert!(!Fuente::ClaudeCode.es_web() && !Fuente::Codex.es_web());
+        assert!(Fuente::ClaudeWeb.es_web() && Fuente::ChatGpt.es_web());
+    }
 }

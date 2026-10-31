@@ -3,7 +3,7 @@ use crate::exclusiones;
 use crate::modelo::{ConversacionParseada, Fuente};
 use crate::titulo::titulo_util;
 use crate::{dir_claude, dir_codex, nisaba_home};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::fs::{self, OpenOptions, TryLockError};
@@ -64,7 +64,7 @@ fn mtime_segs(ruta: &Path) -> Option<(i64, i64)> {
     Some((m.len() as i64, t))
 }
 
-fn huella(c: &ConversacionParseada) -> String {
+pub(crate) fn huella(c: &ConversacionParseada) -> String {
     let mut h = Sha256::new();
     h.update(c.fuente.as_str().as_bytes());
     h.update(c.id_original.as_bytes());
@@ -207,31 +207,7 @@ fn escribir(
         |f| f.get(0),
     )?;
     tx.execute("DELETE FROM mensajes WHERE conversacion_id=?1", [id])?;
-    {
-        let mut ins_m = tx.prepare(
-            "INSERT INTO mensajes(conversacion_id, orden, uuid, id_padre, rol, modelo, hora, oculto)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-        )?;
-        let mut ins_p = tx.prepare(
-            "INSERT INTO partes(mensaje_id, orden, tipo, contenido) VALUES (?1,?2,?3,?4)",
-        )?;
-        for (i, m) in conv.mensajes.iter().enumerate() {
-            ins_m.execute(params![
-                id,
-                i as i64,
-                m.uuid,
-                m.id_padre,
-                m.rol.as_str(),
-                m.modelo,
-                m.hora,
-                m.oculto as i64
-            ])?;
-            let mid = tx.last_insert_rowid();
-            for (j, p) in m.partes.iter().enumerate() {
-                ins_p.execute(params![mid, j as i64, p.tipo.as_str(), p.contenido])?;
-            }
-        }
-    }
+    insertar_mensajes(&tx, id, conv)?;
     tx.commit()?;
     if padre_id.is_none() {
         if let Some(p) = &conv.padre_original {
@@ -243,6 +219,37 @@ fn escribir(
     } else {
         Escrito::Nuevo
     })
+}
+
+/// Inserta los mensajes y sus partes en orden. Quien llama ya borró los anteriores.
+pub(crate) fn insertar_mensajes(
+    tx: &Transaction,
+    id: i64,
+    conv: &ConversacionParseada,
+) -> rusqlite::Result<()> {
+    let mut ins_m = tx.prepare(
+        "INSERT INTO mensajes(conversacion_id, orden, uuid, id_padre, rol, modelo, hora, oculto)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+    )?;
+    let mut ins_p =
+        tx.prepare("INSERT INTO partes(mensaje_id, orden, tipo, contenido) VALUES (?1,?2,?3,?4)")?;
+    for (i, m) in conv.mensajes.iter().enumerate() {
+        ins_m.execute(params![
+            id,
+            i as i64,
+            m.uuid,
+            m.id_padre,
+            m.rol.as_str(),
+            m.modelo,
+            m.hora,
+            m.oculto as i64
+        ])?;
+        let mid = tx.last_insert_rowid();
+        for (j, p) in m.partes.iter().enumerate() {
+            ins_p.execute(params![mid, j as i64, p.tipo.as_str(), p.contenido])?;
+        }
+    }
+    Ok(())
 }
 
 /// Segundos Unix → `AAAAMMDDTHHMMSSZ` (UTC, calendario civil).
@@ -273,6 +280,9 @@ pub(crate) fn destino_copia(
     let (raiz, carpeta) = match fuente {
         Fuente::ClaudeCode => (&rutas.claude, "claude-code"),
         Fuente::Codex => (&rutas.codex, "codex"),
+        Fuente::ClaudeWeb | Fuente::ChatGpt => {
+            return Err("las fuentes web no tienen copia".to_string())
+        }
     };
     let rel = origen
         .strip_prefix(raiz)
@@ -572,6 +582,7 @@ fn rellenar_cwd_desde_copias(conn: &Connection, rutas: &Rutas) {
             .and_then(|copia| match fuente {
                 Fuente::ClaudeCode => claude_code::parsear(&copia).ok(),
                 Fuente::Codex => codex::parsear(&copia).ok(),
+                Fuente::ClaudeWeb | Fuente::ChatGpt => None,
             })
             .and_then(|c| c.cwd);
         // Huella vacía (no NULL): no se vuelve a intentar; si la fuente reaparece, se reescribe.
@@ -586,6 +597,7 @@ fn cwd_cabecera(c: &Candidato) -> Option<String> {
     match c.fuente {
         Fuente::ClaudeCode => claude_code::cwd_cabecera(&c.ruta),
         Fuente::Codex => codex::cwd_cabecera(&c.ruta),
+        Fuente::ClaudeWeb | Fuente::ChatGpt => None,
     }
 }
 
@@ -593,6 +605,7 @@ fn parsear(c: &Candidato) -> Result<ConversacionParseada, String> {
     match c.fuente {
         Fuente::ClaudeCode => claude_code::parsear(&c.ruta),
         Fuente::Codex => codex::parsear(&c.ruta),
+        Fuente::ClaudeWeb | Fuente::ChatGpt => Err("las fuentes web no se indexan".to_string()),
     }
 }
 

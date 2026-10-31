@@ -76,15 +76,24 @@ pub struct Lectura {
     pub es_subagente: bool,
 }
 
-struct Msg {
+/// Una versión anterior de una conversación web.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Version {
+    pub id: i64,
+    /// Cuándo entró este contenido en el archivo (ISO, UTC).
+    pub importada: String,
+}
+
+pub(crate) struct Msg {
     orden: i64,
-    uuid: Option<String>,
-    id_padre: Option<String>,
-    rol: String,
-    modelo: Option<String>,
-    hora: Option<String>,
-    oculto: bool,
-    partes: Vec<(String, String)>,
+    pub(crate) uuid: Option<String>,
+    pub(crate) id_padre: Option<String>,
+    pub(crate) rol: String,
+    pub(crate) modelo: Option<String>,
+    pub(crate) hora: Option<String>,
+    pub(crate) oculto: bool,
+    /// `(tipo, contenido)`.
+    pub(crate) partes: Vec<(String, String)>,
 }
 
 struct Hijo {
@@ -197,7 +206,10 @@ fn bloque_texto(m: &Msg, texto: String) -> Bloque {
     }
 }
 
-fn cargar_mensajes(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<Vec<Msg>> {
+pub(crate) fn cargar_mensajes(
+    conn: &Connection,
+    conversacion_id: i64,
+) -> rusqlite::Result<Vec<Msg>> {
     let mut stmt = conn.prepare(
         "SELECT m.id, m.orden, m.uuid, m.id_padre, m.rol, m.modelo, m.hora, m.oculto
          FROM mensajes m WHERE m.conversacion_id = ?1 ORDER BY m.orden",
@@ -425,6 +437,21 @@ pub fn leer(conn: &Connection, conversacion_id: i64, t: &Tramo) -> rusqlite::Res
         fuente,
         es_subagente,
     })
+}
+
+/// Versiones anteriores de una conversación web, de la más antigua a la más reciente.
+/// Solo en la tablilla web: la local no tiene `version_de`.
+pub fn versiones(conn: &Connection, conversacion_id: i64) -> rusqlite::Result<Vec<Version>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, COALESCE(importada, '') FROM conversaciones WHERE version_de = ?1 ORDER BY id",
+    )?;
+    let filas = stmt.query_map([conversacion_id], |r| {
+        Ok(Version {
+            id: r.get(0)?,
+            importada: r.get(1)?,
+        })
+    })?;
+    filas.collect()
 }
 
 fn con_hora(base: String, hora: &Option<String>) -> String {

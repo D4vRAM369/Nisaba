@@ -5,6 +5,7 @@ pub mod busqueda;
 pub mod db;
 pub mod exclusiones;
 pub mod exportar;
+pub mod importar;
 pub mod indexador;
 pub mod lector;
 pub mod modelo;

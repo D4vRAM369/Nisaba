@@ -47,6 +47,7 @@ fn poner_llave(con: &Connection, llave: &LlaveMaestra) -> rusqlite::Result<()> {
 }
 
 /// v3: una conversación puede ser una versión anterior de otra (`version_de`) y no se lista.
+/// Además guarda qué es cada fila (`tipo`), cuándo entró (`importada`) y su JSON (`originales`).
 fn migrar_web(con: &mut Connection) -> rusqlite::Result<()> {
     if version(con)? >= VERSION_WEB {
         return Ok(());
@@ -56,6 +57,11 @@ fn migrar_web(con: &mut Connection) -> rusqlite::Result<()> {
     if version(&tx)? < VERSION_WEB {
         tx.execute_batch(
             "ALTER TABLE conversaciones ADD COLUMN version_de INTEGER REFERENCES conversaciones(id);
+             ALTER TABLE conversaciones ADD COLUMN tipo TEXT NOT NULL DEFAULT 'conversacion';
+             ALTER TABLE conversaciones ADD COLUMN importada TEXT;
+             CREATE TABLE originales(
+               conversacion_id INTEGER PRIMARY KEY REFERENCES conversaciones(id) ON DELETE CASCADE,
+               json TEXT NOT NULL);
              DROP VIEW conversaciones_visibles;
              CREATE VIEW conversaciones_visibles AS
                SELECT c.* FROM conversaciones c
