@@ -1,6 +1,6 @@
 [package]
 name = "nisaba-gui"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 authors = ["D4vRAM369"]
 description = "Bóveda local de tus conversaciones con IAs (Claude Code y Codex)"
