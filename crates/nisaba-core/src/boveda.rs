@@ -29,6 +29,9 @@ const BYTES_NONCE: usize = 12;
 /// La llave más los 16 bytes de la etiqueta de GCM.
 const BYTES_CIFRADO: usize = BYTES_LLAVE + 16;
 const CARACTERES_POR_GRUPO: usize = 4;
+/// Lo que devuelve Windows al pedir un enlace duro en FAT o exFAT, como un USB con el zip portable.
+/// Rust no lo traduce a `Unsupported`. En Linux el código 1 es otro error: solo cuenta en Windows.
+const ERROR_INVALID_FUNCTION: i32 = 1;
 
 // El diseño parte de m=128 MiB, t=3, que en un Ryzen 5 5600G (release) abría en 0,26 s. Con t=8
 // esa máquina tarda ~0,6 s, para quedar en ~1 s en un portátil normal, que es la meta del diseño.
@@ -449,18 +452,18 @@ fn resolver_enlace(
     match enlace {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(ErrorBoveda::YaExiste),
-        // FAT y compañía no tienen enlaces duros: queda la comprobación previa de `guardar`.
-        // Con cualquier otro error, `rename` podría pisar lo que `hard_link` no pudo comprobar.
-        Err(e)
-            if matches!(
-                e.kind(),
-                io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
-            ) =>
-        {
-            reemplazar(temporal, destino)
-        }
+        // Sin enlaces duros queda la comprobación previa de `guardar`. Con cualquier otro error,
+        // `rename` podría pisar lo que `hard_link` no pudo comprobar.
+        Err(e) if sin_enlaces_duros(&e) => reemplazar(temporal, destino),
         Err(e) => Err(io(e)),
     }
+}
+
+fn sin_enlaces_duros(e: &io::Error) -> bool {
+    matches!(
+        e.kind(),
+        io::ErrorKind::Unsupported | io::ErrorKind::PermissionDenied
+    ) || (cfg!(windows) && e.raw_os_error() == Some(ERROR_INVALID_FUNCTION))
 }
 
 /// `rename` queda en la carpeta, que también hay que asentar en disco. A mejor esfuerzo: si
@@ -931,6 +934,17 @@ mod tests {
             resolver_enlace(Err(tipo.into()), &temporal, &destino).unwrap();
             assert_eq!(fs::read_to_string(&destino).unwrap(), "mía");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn fat_en_windows_recurre_a_rename() {
+        let d = tempdir().unwrap();
+        let (temporal, destino) = (d.path().join("t"), d.path().join(BOVEDA));
+        fs::write(&temporal, "mía").unwrap();
+        let fat = io::Error::from_raw_os_error(ERROR_INVALID_FUNCTION);
+        resolver_enlace(Err(fat), &temporal, &destino).unwrap();
+        assert_eq!(fs::read_to_string(&destino).unwrap(), "mía");
     }
 
     #[test]
