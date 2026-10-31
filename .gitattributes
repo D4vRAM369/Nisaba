@@ -1,0 +1,2 @@
+# Los fixtures se comparan byte a byte: en Windows, CRLF rompería los tests.
+**/fixtures/** text eol=lf
