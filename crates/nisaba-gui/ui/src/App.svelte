@@ -18,7 +18,7 @@
   let mostrarSalud = $state(false);
   let mostrarAjustes = $state(false);
   let mostrarArchivo = $state(false);
-  let estadoWeb = $state<EstadoArchivo>('sin-crear');
+  let estadoWeb = $state<EstadoArchivo>('no_existe');
   let propuesta = $state<string | null>(null);
   function noIndexar(carpeta: string) { propuesta = carpeta; mostrarAjustes = true; mostrarSalud = false; mostrarArchivo = false; }
   let pendiente = $state(false);

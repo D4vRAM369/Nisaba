@@ -25,7 +25,7 @@
     cargando = true; error = null;
     try {
       const r = ver !== null
-        ? await leerVersion(id, ver, { cantidad: 20, desde, todo })
+        ? await leerVersion(ver, { cantidad: 20, desde, todo })
         : hoja !== null
           ? await leerRama(id, hoja, { cantidad: 20, desde, todo })
           : await leer(id, { cantidad: 20, desde, alrededorDe: desde === undefined ? alrededorDe : undefined, todo });

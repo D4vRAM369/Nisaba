@@ -19,7 +19,7 @@
   } from '../lib/api';
 
   let {
-    estado = $bindable('sin-crear'),
+    estado = $bindable('no_existe'),
     cambio,
   }: {
     estado: EstadoArchivo;
@@ -78,7 +78,7 @@
     }
     cargando = true;
     try {
-      codigoGenerado = await prepararArchivo(clave1);
+      codigoGenerado = await prepararArchivo(clave1, clave2);
       casillaConfirmada = false;
       copiadoCodigo = false;
     } catch (err) {
@@ -146,12 +146,13 @@
     }
     cargando = true;
     try {
-      await recuperarArchivo(codigoRecuperacion.trim(), nuevaClaveRec1);
+      await recuperarArchivo(codigoRecuperacion.trim(), nuevaClaveRec1, nuevaClaveRec2);
       codigoRecuperacion = '';
       nuevaClaveRec1 = '';
       nuevaClaveRec2 = '';
       modoRecuperar = false;
       aviso = textos.contrasenaRestablecida;
+      await refrescarEstado();
     } catch (err) {
       error = String(err);
     } finally {
@@ -219,7 +220,7 @@
     }
     cargando = true;
     try {
-      await cambiarContrasenaArchivo(claveActual, claveNueva1);
+      await cambiarContrasenaArchivo(claveActual, claveNueva1, claveNueva2);
       claveActual = '';
       claveNueva1 = '';
       claveNueva2 = '';
@@ -272,7 +273,7 @@
   {#if error}<p class="error-lector" role="alert">{error}</p>{/if}
   {#if aviso}<aside class="aviso-salud" role="status">{aviso}</aside>{/if}
 
-  {#if estado === 'sin-crear'}
+  {#if estado === 'no_existe'}
     <div class="tarjeta-archivo">
       {#if !codigoGenerado}
         <h3>{textos.crearArchivoTitulo}</h3>
@@ -363,7 +364,7 @@
         </form>
       {/if}
     </div>
-  {:else}
+  {:else if estado === 'desbloqueado'}
     <div
       class="tarjeta-archivo zona-importacion"
       class:arrastrando
@@ -390,7 +391,7 @@
           <p class="resumen-linea">
             <strong>
               {textos.resumenImportacion(
-                resumen.fuente,
+                textos.archivoWeb,
                 resumen.nuevas,
                 resumen.actualizadas,
                 resumen.versionadas,
@@ -403,7 +404,7 @@
               {#each resumen.avisos as av}<li>{av}</li>{/each}
             </ul>
           {/if}
-          <p class="aviso-zip-sin-cifrar">{textos.avisoZipSinCifrar(resumen.ruta)}</p>
+          <p class="aviso-zip-sin-cifrar">{textos.avisoZipSinCifrar(resumen.ruta_origen)}</p>
         </div>
       {/if}
     </div>

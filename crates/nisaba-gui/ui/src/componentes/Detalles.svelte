@@ -163,11 +163,11 @@
         <ol class="lista-citas-web">
           {#each detalles.citas as cita}
             <li>
-              <span class="indice-cita">[{cita.indice}]</span>
+              <span class="indice-cita">[{cita.numero}]</span>
               {#if enlacePermitido(cita.url)}
-                <a href={cita.url} target="_blank" rel="noreferrer noopener">{cita.titulo || cita.url}</a>
+                <a href={cita.url} target="_blank" rel="noreferrer noopener">{cita.url}</a>
               {:else}
-                <span>{cita.titulo || cita.url}</span>
+                <span>{cita.url}</span>
               {/if}
             </li>
           {/each}
@@ -182,7 +182,7 @@
           {#each detalles.herramientas as h}
             <details class="detalle-evento">
               <summary><code>{h.nombre}</code></summary>
-              <Codigo texto={h.salida ? `${h.entrada}\n\nResultado:\n${h.salida}` : h.entrada} />
+              <Codigo texto={h.resultado ? `${h.entrada}\n\nResultado:\n${h.resultado}` : h.entrada} />
             </details>
           {/each}
         </div>
@@ -200,13 +200,13 @@
                 <button
                   type="button"
                   class="boton-rama-web"
-                  class:activo={(hojaActiva === null && rama.activa) || hojaActiva === rama.hoja_id}
-                  onclick={() => (rama.activa ? volverActual() : elegirRama(rama.hoja_id))}
+                  class:activo={(hojaActiva === null && rama.activa) || hojaActiva === rama.hoja}
+                  onclick={() => (rama.activa ? volverActual() : elegirRama(rama.hoja))}
                 >
                   <span>
                     {rama.activa ? textos.ramaActiva : `Rama #${idx + 1}`} · {rama.mensajes} msj
                   </span>
-                  <small>{fecha(rama.fin)}</small>
+                  <small>{fecha(rama.hora)}</small>
                 </button>
               </li>
             {/each}
@@ -226,16 +226,16 @@
                 <span>{textos.versionActual}</span>
               </button>
             </li>
-            {#each versiones as v}
+            {#each versiones as v, idx}
               <li>
                 <button
                   type="button"
                   class="boton-rama-web"
-                  class:activo={versionActiva === v.version}
-                  onclick={() => elegirVersion(v.version)}
+                  class:activo={versionActiva === v.id}
+                  onclick={() => elegirVersion(v.id)}
                 >
-                  <span>v{v.version} · {v.mensajes} msj</span>
-                  <small>{fecha(v.importada_en)}</small>
+                  <span>v{idx + 1}</span>
+                  <small>{fecha(v.importada)}</small>
                 </button>
               </li>
             {/each}
