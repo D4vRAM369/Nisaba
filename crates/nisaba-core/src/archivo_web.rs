@@ -157,7 +157,6 @@ mod tests {
         sembrar(&con);
         drop(con);
         assert!(existe(dir.path()));
-        // Reabrir con la llave en bruto demuestra que `x'…'` se aplica de verdad.
         let con = abrir(dir.path(), &llave).unwrap();
         assert_eq!(coincidencias(&con, "pillmate"), 1);
         assert_eq!(version(&con).unwrap(), VERSION_WEB);
@@ -208,12 +207,33 @@ mod tests {
             [],
         )
         .unwrap();
-        let visibles: i64 = con
-            .query_row("SELECT count(*) FROM conversaciones_visibles", [], |f| {
-                f.get(0)
-            })
+        let mut q = con
+            .prepare("SELECT id FROM conversaciones_visibles ORDER BY id")
             .unwrap();
-        assert_eq!(visibles, 1);
+        let visibles: Vec<i64> = q
+            .query_map([], |f| f.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(visibles, vec![1]);
+    }
+
+    #[test]
+    fn la_llave_se_aplica_en_bruto_y_no_como_frase() {
+        let dir = tempdir().unwrap();
+        let llave = LlaveMaestra::de_prueba(8);
+        let con = abrir(dir.path(), &llave).unwrap();
+        sembrar(&con);
+        drop(con);
+        // Una llave en bruto ignora `kdf_iter`; una frase derivaría otra llave y no abriría.
+        let con = Connection::open(dir.path().join(TABLILLA_WEB)).unwrap();
+        con.execute_batch(&format!("PRAGMA key = \"x'{}'\"", llave.hex().as_str()))
+            .unwrap();
+        con.execute_batch("PRAGMA kdf_iter = 1234").unwrap();
+        let n: i64 = con
+            .query_row("SELECT count(*) FROM conversaciones", [], |f| f.get(0))
+            .unwrap();
+        assert_eq!(n, 1);
     }
 
     #[test]
