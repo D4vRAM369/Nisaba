@@ -192,9 +192,11 @@ fn entero(args: &Value, k: &str) -> Option<i64> {
 fn buscar_tool(conn: &Connection, consulta: &str, args: &Value) -> Result<String, String> {
     let fuente = match args.get("fuente").and_then(Value::as_str) {
         None => None,
-        Some(s) => {
-            Some(Fuente::desde_str(s).ok_or("Fuente desconocida: usa claude-code o codex.")?)
-        }
+        Some(s) => Some(
+            Fuente::desde_str(s)
+                .filter(|f| !f.es_web())
+                .ok_or("Fuente desconocida: usa claude-code o codex. El MCP solo ve lo local.")?,
+        ),
     };
     let mut f = Filtros {
         fuente,

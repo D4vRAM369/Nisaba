@@ -1,6 +1,9 @@
 mod comun;
 use comun::ctx;
+use nisaba_core::archivo_web;
+use nisaba_core::boveda::{self, BOVEDA, TABLILLA_WEB};
 use serde_json::{json, Value};
+use std::fs;
 use std::io::Write;
 use std::process::Stdio;
 
@@ -228,4 +231,70 @@ fn mcp_leer_excluida() {
     let t = texto(&l[0]);
     assert!(t.contains("Conversación excluida por el usuario"), "{t}");
     assert!(!t.contains("PillMate"), "{t}");
+}
+
+/// Un archivo web real con el marcador y `boveda.json` estropeada o ausente: si el MCP lo abriese,
+/// fallaría; si lo leyese de algún modo, saldría el marcador.
+#[test]
+fn mcp_no_abre_archivo_web() {
+    const MARCADOR: &str = "ZorroVioletaMarcador";
+    let c = ctx();
+    let casa = c.dir.path().join("home");
+    fs::create_dir_all(&casa).unwrap();
+    let llave = boveda::preparar("correcta caballo pila")
+        .unwrap()
+        .guardar(&casa)
+        .unwrap();
+    let web = archivo_web::abrir(&casa, &llave).unwrap();
+    web.execute_batch(&format!(
+        "INSERT INTO conversaciones(id, fuente, id_original) VALUES (1, 'claude-web', 'web00001');
+         INSERT INTO mensajes(id, conversacion_id, orden, rol, oculto) VALUES (1, 1, 0, 'usuario', 0);
+         INSERT INTO partes(id, mensaje_id, orden, tipo, contenido) VALUES (1, 1, 0, 'texto', '{MARCADOR}');"
+    ))
+    .unwrap();
+    drop(web);
+
+    for vuelta in ["corrupta", "ausente", "tablilla corrupta"] {
+        match vuelta {
+            "corrupta" => fs::write(casa.join(BOVEDA), "no soy una bóveda").unwrap(),
+            "ausente" => fs::remove_file(casa.join(BOVEDA)).unwrap(),
+            _ => fs::write(casa.join(TABLILLA_WEB), "no soy una tablilla").unwrap(),
+        }
+        let en_disco = fs::read(casa.join(TABLILLA_WEB)).unwrap();
+        let (l, cod) = sesion_en(
+            &c,
+            &[
+                llamada(1, "buscar_conversaciones", json!({"consulta": MARCADOR})),
+                llamada(2, "leer_conversacion", json!({"id": "cw-web00001"})),
+            ],
+        );
+        assert_eq!(cod, Some(0), "{vuelta}");
+        assert_eq!(l.len(), 2, "{vuelta}: {l:?}");
+        assert_eq!(texto(&l[0]), "Sin resultados.", "{vuelta}");
+        assert!(texto(&l[1]).contains("No encuentro"), "{vuelta}");
+        assert!(l.iter().all(|x| !x.contains(MARCADOR)), "{vuelta}: {l:?}");
+        assert_eq!(fs::read(casa.join(TABLILLA_WEB)).unwrap(), en_disco);
+    }
+}
+
+#[test]
+fn mcp_no_menciona_el_archivo_web_en_su_codigo() {
+    let codigo = include_str!("../src/mcp.rs");
+    for prohibido in ["archivo_web", "boveda", "crate::web"] {
+        assert!(!codigo.contains(prohibido), "mcp.rs usa {prohibido}");
+    }
+}
+
+#[test]
+fn mcp_rechaza_las_fuentes_web() {
+    for fuente in ["claude-web", "chatgpt"] {
+        let (l, _) = sesion(&[llamada(
+            1,
+            "buscar_conversaciones",
+            json!({"consulta": "x", "fuente": fuente}),
+        )]);
+        let r = parse(&l[0]);
+        assert_eq!(r["result"]["isError"], true, "{r}");
+        assert!(texto(&l[0]).contains("claude-code o codex"), "{r}");
+    }
 }

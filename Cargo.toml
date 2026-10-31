@@ -1,3 +1,11 @@
 [workspace]
 resolver = "2"
 members = ["crates/nisaba-core", "crates/nisaba-cli", "crates/nisaba-gui"]
+
+# Sin optimizar, cada derivación de Argon2 tarda 12 s y las pruebas de la CLI, que usan la bóveda de
+# verdad, serían inviables. Solo afecta a estas dos dependencias, no al código propio.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
